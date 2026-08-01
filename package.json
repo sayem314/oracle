@@ -1,0 +1,15 @@
+{
+  "name": "oracle",
+  "private": true,
+  "version": "0.0.0",
+  "workspaces": [
+    "apps/web"
+  ],
+  "scripts": {
+    "dev": "bun run --cwd apps/web dev",
+    "build": "bun run --cwd apps/web build",
+    "check": "bun run --cwd apps/web check",
+    "lint": "bun run --cwd apps/web lint",
+    "format": "bun run --cwd apps/web format"
+  }
+}
