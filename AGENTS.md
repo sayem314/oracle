@@ -1,0 +1,61 @@
+# AGENTS.md
+
+Guidance for AI coding agents (and humans) working in this repository.
+
+## Project
+
+oracle is an autonomous personal assistant, built step by step. Self-hosted monorepo with a Go API and a SvelteKit frontend. Multi-user and API-first (web now, mobile later).
+
+## Commands
+
+Everything runs from the repo root:
+
+| Command     | What it does                                    |
+| ----------- | ----------------------------------------------- |
+| `make help` | Show all commands                               |
+| `make dev`  | Run the Go API and SvelteKit dev server         |
+| `make test` | Go tests + svelte-check                         |
+| `make lint` | golangci-lint + prettier check + svelte-check   |
+| `make fmt`  | gofmt + prettier write                          |
+
+Go runs via module paths from the root, for example `go test ./apps/api/...`. The frontend is a bun workspace at `apps/web`.
+
+After touching Go modules, run `go mod tidy`.
+
+## Layout
+
+```
+apps/api/            Go API (module github.com/sayem314/oracle/apps/api)
+  cmd/oracle/        entrypoint, wiring only
+  internal/config/   koanf config loading + validation
+  internal/server/   HTTP app, routes, handlers (one file per domain)
+apps/web/            SvelteKit frontend (bun workspace)
+docs/                decision log
+```
+
+Go style: `cmd/` per binary, private code under `internal/` grouped by feature. No `pkg/` until something needs importing elsewhere.
+
+## Conventions
+
+- Tests mirror sources (`foo.go` gets `foo_test.go`) and use black-box packages (`server_test`).
+- testify: `require` for preconditions (errors, nil checks), `assert` for independent value checks. No `testify/suite` (use `t.Run`), no `testify/mock` (hand-written fakes). Enforced by `testifylint`.
+- golangci-lint v2 (`.golangci.yml`) must report zero issues. gofmt is enforced.
+- Code comments: default to none. A one-line `//` comment is allowed when the "why" is genuinely non-obvious (precedence, subtle edge cases, workarounds). Never comment self-evident code, and no block explanations unless asked.
+- Config via koanf. Precedence: defaults, then `.env`, then `ORACLE_*` env vars, then plain `PORT`. Copy `.env.example` to `.env` (git-ignored).
+- Logging via the global `github.com/rs/zerolog/log` package, configured once in `main`. Colored console on a TTY, JSON otherwise. Import and use `log.Info()` directly, no plumbing.
+- Small steps: only build what the current step needs. Revisit structure when it hurts.
+
+## Roadmap
+
+- [x] Step 1: Fiber v3 server + `/health`
+- [x] Step 2: koanf config + zerolog logging
+- [ ] Step 3: SQLite + ent (Session/Message schemas, migrations, store)
+- [ ] Step 4: LLM `Provider` interface + OpenAI-compatible impl + mock
+- [ ] Step 5: SSE `POST /api/v1/chat` wired to Provider
+- [ ] Step 6: LimenAuth at `/auth/*` + session middleware on `/api/*`
+- [ ] Step 7: SvelteKit login + streaming chat UI
+- [ ] Step 8: Tool-calling foundation
+- [ ] Step 9: Permission ruleset (allow/deny/ask)
+- [ ] Step 10: Scheduler, multi-user hardening, deploy
+
+Rationale for these choices lives in `docs/decisions.md`.
