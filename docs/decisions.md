@@ -2,6 +2,15 @@
 
 Lightweight ADRs. Latest first.
 
+## 2026-08-03: LLM provider layer, dual protocol and streaming first
+
+- `llm.Provider` ships with three implementations: OpenAI-compatible (`openai/openai-go` v3), Anthropic-compatible (`anthropics/anthropic-sdk-go`), and a deterministic mock. The two real protocols cover the market: hundreds of providers (OpenRouter, LiteLLM, vLLM, Ollama, gateways) expose one of these two APIs, so a configurable base URL on each unlocks them without per-provider code.
+- The interface is streaming first (`Next/Current/Err/Close` iterator), because SSE chat is the primary consumer one step away. Non-streaming callers accumulate chunks. Empty protocol events are skipped in the adapters, so every `Chunk` carries a delta or a finish reason.
+- Domain types (`Message`, `Request`, `Chunk`) are ours; SDK types never cross the interface. `System` is a first-class request field: Anthropic takes it as a parameter, OpenAI as a message, and papering over that later would leak.
+- Mock is the default provider: zero-config `make dev`, deterministic tests. Real providers require `llm_api_key` and `llm_model` at config validation, fail fast at boot.
+- Anthropic requires `max_tokens`; defaulted to 4096 for now, surfaced on the request when tuning matters.
+- Hermetic tests: both real providers are tested against `httptest` servers speaking raw SSE. Anthropic's typed stream dispatches on the `event:` line, not just the JSON `type`, so fakes must emit both (matches production responses).
+
 ## 2026-08-03: Storage layer, sqlc + goose + modernc.org/sqlite
 
 - Chose sqlc (SQL-first codegen) over ent and bob after an activity audit on 2026-08-03. sqlc and bob both commit daily (last commits 2026-08-02), jet monthly (2026-06-20), ent only in bursts (2026-05-31, v0.14.6 in March, low-maintenance mode), squirrel (2024-02-27) and goqu (2023-12-14) are dormant. sqlc is company-backed and rewrote its SQLite parser two days before this decision.
@@ -54,5 +63,5 @@ Lightweight ADRs. Latest first.
 
 - LimenAuth shares the same SQLite `*sql.DB`.
 - LimenAuth for auth (credential-password + JWT), mounted at `/auth/*`, guarding `/api/*` via `adaptor.ConvertRequest`. Kept behind our own `auth` interface due to project youth.
-- LLM access via `openai/openai-go` + `anthropics/anthropic-sdk-go` behind a custom `Provider` interface, with a mock implementation for tests.
+- Per-user LLM credentials: once LimenAuth lands, provider, API key, base URL, and model move from env config to per-user settings in the database, and chat requests can carry a model override so users switch models mid-conversation, the way modern agent and IDE tools do. Whether env config is removed or kept as an admin-supplied default is decided then.
 - API-first: OpenAPI spec. Codegen approach evaluated per step.

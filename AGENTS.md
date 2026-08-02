@@ -30,6 +30,7 @@ apps/api/            Go API (module github.com/sayem314/oracle/apps/api)
   cmd/oracle/        entrypoint, wiring only
   db/queries/        SQL queries (sqlc input)
   internal/config/   koanf config loading + validation
+  internal/llm/      LLM Provider interface, OpenAI + Anthropic implementations, mock
   internal/server/   HTTP app, routes, handlers (one file per domain)
   internal/store/    Store interface over sqlc-generated db package
   migrations/        goose SQL migrations, embedded and applied at startup
@@ -48,6 +49,7 @@ Go style: `cmd/` per binary, private code under `internal/` grouped by feature. 
 - Config via koanf. Precedence: defaults, then `.env`, then `ORACLE_*` env vars, then plain `PORT`. Copy `.env.example` to `.env` (git-ignored).
 - Logging via the global `github.com/rs/zerolog/log` package, configured once in `main`. Colored console on a TTY, JSON otherwise. Import and use `log.Info()` directly, no plumbing.
 - Storage: SQLite via sqlc + goose + `modernc.org/sqlite` (pure Go). Write queries in `apps/api/db/queries/*.sql`, then `make sqlc`. Schema lives in `apps/api/migrations/` (goose Up/Down files, embedded, applied at startup). New migration: `make migration name=foo`. Handlers depend on the `store.Store` interface, never on the generated package directly.
+- LLM access via the `llm.Provider` interface (streaming iterator: `Next/Current/Err/Close`). Three implementations: OpenAI-compatible (`openai-go`), Anthropic-compatible (`anthropic-sdk-go`), and a deterministic mock (the default). `llm_base_url` override covers any compatible gateway (OpenRouter, LiteLLM, Ollama, ...). Handlers depend on the interface; tests use the mock or `httptest` SSE servers.
 - Small steps: only build what the current step needs. Revisit structure when it hurts.
 
 ## Roadmap
@@ -55,7 +57,7 @@ Go style: `cmd/` per binary, private code under `internal/` grouped by feature. 
 - [x] Step 1: Fiber v3 server + `/health`
 - [x] Step 2: koanf config + zerolog logging
 - [x] Step 3: SQLite via sqlc + goose (Session/Message schemas, embedded migrations, store)
-- [ ] Step 4: LLM `Provider` interface + OpenAI-compatible impl + mock
+- [x] Step 4: LLM `Provider` interface + OpenAI + Anthropic implementations + mock
 - [ ] Step 5: SSE `POST /api/v1/chat` wired to Provider
 - [ ] Step 6: LimenAuth at `/auth/*` + session middleware on `/api/*`
 - [ ] Step 7: SvelteKit login + streaming chat UI

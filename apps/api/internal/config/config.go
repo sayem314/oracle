@@ -18,10 +18,16 @@ const envPrefix = "ORACLE_"
 
 const defaultDatabaseURL = "file:oracle.db?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(ON)"
 
+const defaultLLMProvider = "mock"
+
 type Config struct {
 	Port        int
 	LogLevel    zerolog.Level
 	DatabaseURL string
+	LLMProvider string
+	LLMBaseURL  string
+	LLMAPIKey   string
+	LLMModel    string
 }
 
 func Load() (Config, error) {
@@ -31,6 +37,7 @@ func Load() (Config, error) {
 		"port":         8080,
 		"log_level":    "info",
 		"database_url": defaultDatabaseURL,
+		"llm_provider": defaultLLMProvider,
 	}, "."), nil); err != nil {
 		return Config{}, fmt.Errorf("load defaults: %w", err)
 	}
@@ -67,7 +74,29 @@ func Load() (Config, error) {
 		return Config{}, errors.New("database_url is required")
 	}
 
-	return Config{Port: port, LogLevel: lvl, DatabaseURL: databaseURL}, nil
+	llmProvider := k.String("llm_provider")
+	switch llmProvider {
+	case "mock":
+	case "openai", "anthropic":
+		if k.String("llm_api_key") == "" {
+			return Config{}, fmt.Errorf("llm_api_key is required for llm_provider %q", llmProvider)
+		}
+		if k.String("llm_model") == "" {
+			return Config{}, fmt.Errorf("llm_model is required for llm_provider %q", llmProvider)
+		}
+	default:
+		return Config{}, fmt.Errorf("invalid llm_provider %q", llmProvider)
+	}
+
+	return Config{
+		Port:        port,
+		LogLevel:    lvl,
+		DatabaseURL: databaseURL,
+		LLMProvider: llmProvider,
+		LLMBaseURL:  k.String("llm_base_url"),
+		LLMAPIKey:   k.String("llm_api_key"),
+		LLMModel:    k.String("llm_model"),
+	}, nil
 }
 
 func loadDotenv(k *koanf.Koanf) error {

@@ -13,6 +13,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/sayem314/oracle/apps/api/internal/config"
+	"github.com/sayem314/oracle/apps/api/internal/llm"
 	"github.com/sayem314/oracle/apps/api/internal/server"
 	"github.com/sayem314/oracle/apps/api/internal/store"
 )
@@ -42,6 +43,16 @@ func main() {
 	if applied > 0 {
 		log.Info().Int("applied", applied).Msg("migrations applied")
 	}
+
+	if _, err := llm.New(llm.Options{
+		Provider: cfg.LLMProvider,
+		BaseURL:  cfg.LLMBaseURL,
+		APIKey:   cfg.LLMAPIKey,
+		Model:    cfg.LLMModel,
+	}); err != nil {
+		log.Fatal().Err(err).Msg("init llm provider")
+	}
+	log.Info().Str("provider", cfg.LLMProvider).Msg("llm provider ready")
 
 	app := server.New()
 

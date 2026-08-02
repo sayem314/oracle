@@ -13,7 +13,10 @@ import (
 
 func clearEnv(t *testing.T) {
 	t.Helper()
-	for _, key := range []string{"ORACLE_PORT", "ORACLE_LOG_LEVEL", "ORACLE_DATABASE_URL", "PORT"} {
+	for _, key := range []string{
+		"ORACLE_PORT", "ORACLE_LOG_LEVEL", "ORACLE_DATABASE_URL", "PORT",
+		"ORACLE_LLM_PROVIDER", "ORACLE_LLM_BASE_URL", "ORACLE_LLM_API_KEY", "ORACLE_LLM_MODEL",
+	} {
 		if v, ok := os.LookupEnv(key); ok {
 			t.Cleanup(func() { _ = os.Setenv(key, v) })
 			_ = os.Unsetenv(key)
@@ -30,6 +33,7 @@ func TestLoadDefaults(t *testing.T) {
 	assert.Equal(t, zerolog.InfoLevel, cfg.LogLevel)
 	assert.Contains(t, cfg.DatabaseURL, "file:oracle.db")
 	assert.Contains(t, cfg.DatabaseURL, "foreign_keys(ON)")
+	assert.Equal(t, "mock", cfg.LLMProvider)
 }
 
 func TestDatabaseURLEnvOverride(t *testing.T) {
@@ -122,4 +126,49 @@ func TestLoadInvalidOraclePort(t *testing.T) {
 
 	_, err := config.Load()
 	require.ErrorContains(t, err, "invalid port")
+}
+
+func TestLLMProviderRealProviders(t *testing.T) {
+	for _, provider := range []string{"openai", "anthropic"} {
+		t.Run(provider, func(t *testing.T) {
+			clearEnv(t)
+			t.Setenv("ORACLE_LLM_PROVIDER", provider)
+			t.Setenv("ORACLE_LLM_API_KEY", "test-key")
+			t.Setenv("ORACLE_LLM_MODEL", "test-model")
+			t.Setenv("ORACLE_LLM_BASE_URL", "http://localhost:11434/v1")
+
+			cfg, err := config.Load()
+			require.NoError(t, err)
+			assert.Equal(t, provider, cfg.LLMProvider)
+			assert.Equal(t, "test-key", cfg.LLMAPIKey)
+			assert.Equal(t, "test-model", cfg.LLMModel)
+			assert.Equal(t, "http://localhost:11434/v1", cfg.LLMBaseURL)
+		})
+	}
+}
+
+func TestLLMProviderMissingAPIKey(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("ORACLE_LLM_PROVIDER", "openai")
+	t.Setenv("ORACLE_LLM_MODEL", "gpt-4o")
+
+	_, err := config.Load()
+	require.ErrorContains(t, err, `llm_api_key is required for llm_provider "openai"`)
+}
+
+func TestLLMProviderMissingModel(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("ORACLE_LLM_PROVIDER", "anthropic")
+	t.Setenv("ORACLE_LLM_API_KEY", "test-key")
+
+	_, err := config.Load()
+	require.ErrorContains(t, err, `llm_model is required for llm_provider "anthropic"`)
+}
+
+func TestLLMProviderInvalid(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("ORACLE_LLM_PROVIDER", "gemini")
+
+	_, err := config.Load()
+	require.ErrorContains(t, err, `invalid llm_provider "gemini"`)
 }
