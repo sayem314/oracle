@@ -11,6 +11,7 @@ linters:
     - revive
     - misspell
     - gosec
+    - testifylint
   settings:
     revive:
       rules:
