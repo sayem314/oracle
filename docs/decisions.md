@@ -2,6 +2,16 @@
 
 Lightweight ADRs. Latest first.
 
+## 2026-08-03: Storage layer, sqlc + goose + modernc.org/sqlite
+
+- Chose sqlc (SQL-first codegen) over ent and bob after an activity audit on 2026-08-03. sqlc and bob both commit daily (last commits 2026-08-02), jet monthly (2026-06-20), ent only in bursts (2026-05-31, v0.14.6 in March, low-maintenance mode), squirrel (2024-02-27) and goqu (2023-12-14) are dormant. sqlc is company-backed and rewrote its SQLite parser two days before this decision.
+- Oracle's storage queries are fixed-shape CRUD over sessions and messages, so bob's dynamic builder would go unused. sqlc ships zero runtime dependency, and raw SQL is the interface, so there is no escape hatch to outgrow.
+- sqlc marks SQLite as beta in its support matrix. Accepted, since the schema is simple and the parser just got heavy investment. Revisit if it bites.
+- goose v3 applies migrations from an embedded FS at startup: single binary, no migration CLI in production. Migration files carry Up and Down, and sqlc reads the same directory for its schema (verified the two coexist).
+- `modernc.org/sqlite` over `mattn/go-sqlite3`: pure Go, no cgo, self-hosted deploys stay a single binary.
+- Timestamps are `DATETIME` columns defaulting to `CURRENT_TIMESTAMP`. modernc returns RFC3339 strings that `database/sql` converts to `time.Time` natively, verified with a throwaway program before committing to the schema.
+- `store.Store` is an interface over the sqlc-generated package. Handlers and later LimenAuth wiring depend on the interface, so tests can use hand-written fakes per the testify convention.
+
 ## 2026-08-02: Global zerolog logger with TTY-aware output
 
 - Use the `github.com/rs/zerolog/log` global, configured once in `main`. No logger plumbing through handlers.
@@ -42,7 +52,7 @@ Lightweight ADRs. Latest first.
 
 ## Planned (not built yet)
 
-- ent + `modernc.org/sqlite` for storage, with Atlas migrations. Shares one `*sql.DB` with LimenAuth.
+- LimenAuth shares the same SQLite `*sql.DB`.
 - LimenAuth for auth (credential-password + JWT), mounted at `/auth/*`, guarding `/api/*` via `adaptor.ConvertRequest`. Kept behind our own `auth` interface due to project youth.
 - LLM access via `openai/openai-go` + `anthropics/anthropic-sdk-go` behind a custom `Provider` interface, with a mock implementation for tests.
 - API-first: OpenAPI spec. Codegen approach evaluated per step.

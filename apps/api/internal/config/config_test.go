@@ -13,7 +13,7 @@ import (
 
 func clearEnv(t *testing.T) {
 	t.Helper()
-	for _, key := range []string{"ORACLE_PORT", "ORACLE_LOG_LEVEL", "PORT"} {
+	for _, key := range []string{"ORACLE_PORT", "ORACLE_LOG_LEVEL", "ORACLE_DATABASE_URL", "PORT"} {
 		if v, ok := os.LookupEnv(key); ok {
 			t.Cleanup(func() { _ = os.Setenv(key, v) })
 			_ = os.Unsetenv(key)
@@ -28,6 +28,25 @@ func TestLoadDefaults(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 8080, cfg.Port)
 	assert.Equal(t, zerolog.InfoLevel, cfg.LogLevel)
+	assert.Contains(t, cfg.DatabaseURL, "file:oracle.db")
+	assert.Contains(t, cfg.DatabaseURL, "foreign_keys(ON)")
+}
+
+func TestDatabaseURLEnvOverride(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("ORACLE_DATABASE_URL", "file::memory:")
+
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	assert.Equal(t, "file::memory:", cfg.DatabaseURL)
+}
+
+func TestLoadEmptyDatabaseURL(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("ORACLE_DATABASE_URL", "")
+
+	_, err := config.Load()
+	require.ErrorContains(t, err, "database_url is required")
 }
 
 func TestLoadEnvOverride(t *testing.T) {

@@ -1,4 +1,4 @@
-.PHONY: help dev run-api run-web build test lint fmt
+.PHONY: help dev run-api run-web build test lint fmt sqlc migration
 
 help: ## Show available commands
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
@@ -28,3 +28,9 @@ lint: ## Lint Go (golangci-lint), check Prettier, and type-check the frontend
 fmt: ## Format Go and frontend code
 	gofmt -w apps/api
 	bun run format
+
+sqlc: ## Regenerate type-safe query code from SQL (requires sqlc CLI)
+	sqlc -f apps/api/sqlc.yaml generate
+
+migration: ## Create a migration (usage: make migration name=create_foo)
+	go run github.com/pressly/goose/v3/cmd/goose -dir apps/api/migrations create $(name) sql

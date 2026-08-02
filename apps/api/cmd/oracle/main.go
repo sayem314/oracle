@@ -14,6 +14,7 @@ import (
 
 	"github.com/sayem314/oracle/apps/api/internal/config"
 	"github.com/sayem314/oracle/apps/api/internal/server"
+	"github.com/sayem314/oracle/apps/api/internal/store"
 )
 
 func main() {
@@ -27,6 +28,20 @@ func main() {
 		out = zerolog.ConsoleWriter{Out: os.Stdout}
 	}
 	log.Logger = zerolog.New(out).Level(cfg.LogLevel).With().Timestamp().Logger()
+
+	sqlDB, err := store.Open(cfg.DatabaseURL)
+	if err != nil {
+		log.Fatal().Err(err).Msg("open database")
+	}
+	defer func() { _ = sqlDB.Close() }()
+
+	applied, err := store.Migrate(sqlDB)
+	if err != nil {
+		log.Fatal().Err(err).Msg("migrate database")
+	}
+	if applied > 0 {
+		log.Info().Int("applied", applied).Msg("migrations applied")
+	}
 
 	app := server.New()
 

@@ -16,17 +16,21 @@ import (
 
 const envPrefix = "ORACLE_"
 
+const defaultDatabaseURL = "file:oracle.db?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(ON)"
+
 type Config struct {
-	Port     int
-	LogLevel zerolog.Level
+	Port        int
+	LogLevel    zerolog.Level
+	DatabaseURL string
 }
 
 func Load() (Config, error) {
 	k := koanf.New(".")
 
 	if err := k.Load(confmap.Provider(map[string]any{
-		"port":      8080,
-		"log_level": "info",
+		"port":         8080,
+		"log_level":    "info",
+		"database_url": defaultDatabaseURL,
 	}, "."), nil); err != nil {
 		return Config{}, fmt.Errorf("load defaults: %w", err)
 	}
@@ -58,7 +62,12 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("invalid log_level: %w", err)
 	}
 
-	return Config{Port: port, LogLevel: lvl}, nil
+	databaseURL := k.String("database_url")
+	if databaseURL == "" {
+		return Config{}, errors.New("database_url is required")
+	}
+
+	return Config{Port: port, LogLevel: lvl, DatabaseURL: databaseURL}, nil
 }
 
 func loadDotenv(k *koanf.Koanf) error {
