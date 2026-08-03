@@ -13,7 +13,7 @@ import (
 )
 
 func TestHealth(t *testing.T) {
-	app := server.New()
+	app := server.New(server.Deps{})
 
 	res, err := app.Test(httptest.NewRequest(http.MethodGet, "/health", nil))
 	require.NoError(t, err)

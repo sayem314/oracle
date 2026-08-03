@@ -58,7 +58,7 @@ Go style: `cmd/` per binary, private code under `internal/` grouped by feature. 
 - [x] Step 2: koanf config + zerolog logging
 - [x] Step 3: SQLite via sqlc + goose (Session/Message schemas, embedded migrations, store)
 - [x] Step 4: LLM `Provider` interface + OpenAI-compatible implementation + mock
-- [ ] Step 5: SSE `POST /api/v1/chat` wired to Provider
+- [x] Step 5: SSE `POST /api/v1/chat` wired to Provider
 - [ ] Step 6: LimenAuth at `/auth/*` + session middleware on `/api/*`
 - [ ] Step 7: SvelteKit login + streaming chat UI
 - [ ] Step 8: Tool-calling foundation

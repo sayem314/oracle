@@ -2,6 +2,15 @@
 
 Lightweight ADRs. Latest first.
 
+## 2026-08-03: SSE chat endpoint, pre-stream validation and named events
+
+- `POST /api/v1/chat` streams over Fiber v3's built-in `sse` middleware, which owns the transport (headers, framing, flushing, 15s heartbeat comments, disconnect detection). Application events stay ours: named events `start`, `delta`, `done`, `error`, JSON payloads. Named events are self-describing for the Step 7 SvelteKit client, which consumes them via fetch + ReadableStream anyway (EventSource is GET-only, so no loss).
+- Two-phase handler: a wrapper validates the body and resolves the session *before* the stream opens, so bad requests get proper HTTP 4xx JSON (`message is required`, `session not found`) instead of a 200 carrying an error event. The SSE `error` event is reserved for failures mid-stream, matching OpenAI's streaming behavior. The wrapper hands off through `c.Locals`.
+- The user message is persisted before streaming; the assistant message only after a complete stream. A failed run leaves the user's turn visible and no partial assistant text behind.
+- Sessions are created implicitly when `session_id` is omitted. `user_id` is an empty placeholder until LimenAuth lands in Step 6 and supplies real identity.
+- Fiber's default error handler renders text/plain, so `server.New` installs a minimal JSON error handler (`{"error": "..."}`); API-first means errors are JSON too.
+- History is the last 1000 messages for now. Token-aware truncation is a later concern.
+
 ## 2026-08-03: Single protocol, OpenAI-compatible only
 
 - Supersedes the dual protocol decision below. The Anthropic-compatible implementation and `anthropics/anthropic-sdk-go` are removed; `llm.Provider` now ships OpenAI-compatible (`openai/openai-go`) plus the deterministic mock.

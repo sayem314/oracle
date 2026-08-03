@@ -44,17 +44,21 @@ func main() {
 		log.Info().Int("applied", applied).Msg("migrations applied")
 	}
 
-	if _, err := llm.New(llm.Options{
+	provider, err := llm.New(llm.Options{
 		Provider: cfg.LLMProvider,
 		BaseURL:  cfg.LLMBaseURL,
 		APIKey:   cfg.LLMAPIKey,
 		Model:    cfg.LLMModel,
-	}); err != nil {
+	})
+	if err != nil {
 		log.Fatal().Err(err).Msg("init llm provider")
 	}
 	log.Info().Str("provider", cfg.LLMProvider).Msg("llm provider ready")
 
-	app := server.New()
+	app := server.New(server.Deps{
+		Store: store.New(sqlDB),
+		LLM:   provider,
+	})
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)

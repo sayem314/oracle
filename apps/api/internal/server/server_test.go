@@ -12,7 +12,7 @@ import (
 )
 
 func TestUnknownRoute(t *testing.T) {
-	app := server.New()
+	app := server.New(server.Deps{})
 
 	res, err := app.Test(httptest.NewRequest(http.MethodGet, "/nope", nil))
 	require.NoError(t, err)
