@@ -34,7 +34,7 @@ func TestNewUnknownProvider(t *testing.T) {
 }
 
 func TestNewProviderSelection(t *testing.T) {
-	for _, provider := range []string{llm.ProviderMock, llm.ProviderOpenAI, llm.ProviderAnthropic} {
+	for _, provider := range []string{llm.ProviderMock, llm.ProviderOpenAI} {
 		t.Run(provider, func(t *testing.T) {
 			p, err := llm.New(llm.Options{Provider: provider, APIKey: "test", Model: "test-model"})
 			require.NoError(t, err)
@@ -147,97 +147,6 @@ func TestOpenAIStreamError(t *testing.T) {
 
 func TestOpenAIUnsupportedRole(t *testing.T) {
 	p, err := llm.New(llm.Options{Provider: llm.ProviderOpenAI, APIKey: "test-key"})
-	require.NoError(t, err)
-
-	_, err = p.Chat(context.Background(), llm.Request{
-		Messages: []llm.Message{{Role: llm.Role("tool"), Content: "x"}},
-	})
-	require.ErrorContains(t, err, `unsupported role "tool"`)
-}
-
-func TestAnthropicStream(t *testing.T) {
-	var gotPath, gotAPIKey string
-	var gotBody map[string]any
-	var decodeErr error
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotPath = r.URL.Path
-		gotAPIKey = r.Header.Get("x-api-key")
-		decodeErr = json.NewDecoder(r.Body).Decode(&gotBody)
-
-		w.Header().Set("Content-Type", "text/event-stream")
-		events := []struct{ event, data string }{
-			{"message_start", `{"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"claude-test","content":[],"stop_reason":null,"usage":{"input_tokens":10,"output_tokens":0}}}`},
-			{"content_block_delta", `{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello"}}`},
-			{"content_block_delta", `{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" world"}}`},
-			{"message_delta", `{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":5}}`},
-			{"message_stop", `{"type":"message_stop"}`},
-		}
-		for _, event := range events {
-			_, _ = w.Write([]byte("event: " + event.event + "\ndata: " + event.data + "\n\n"))
-		}
-	}))
-	defer server.Close()
-
-	p, err := llm.New(llm.Options{
-		Provider: llm.ProviderAnthropic,
-		BaseURL:  server.URL,
-		APIKey:   "test-key",
-	})
-	require.NoError(t, err)
-
-	stream, err := p.Chat(context.Background(), llm.Request{
-		Model:  "claude-test",
-		System: "be brief",
-		Messages: []llm.Message{
-			{Role: llm.RoleUser, Content: "hi"},
-			{Role: llm.RoleAssistant, Content: "hello"},
-			{Role: llm.RoleUser, Content: "how are you?"},
-		},
-	})
-	require.NoError(t, err)
-
-	chunks, text := collect(t, stream)
-	assert.Equal(t, "Hello world", text)
-	assert.Equal(t, "end_turn", chunks[len(chunks)-1].FinishReason)
-
-	assert.Equal(t, "/v1/messages", gotPath)
-	assert.Equal(t, "test-key", gotAPIKey)
-	require.NoError(t, decodeErr)
-	assert.Equal(t, "claude-test", gotBody["model"])
-
-	system, ok := gotBody["system"].([]any)
-	require.True(t, ok)
-	require.Len(t, system, 1)
-	assert.Equal(t, "be brief", system[0].(map[string]any)["text"])
-
-	messages, ok := gotBody["messages"].([]any)
-	require.True(t, ok)
-	require.Len(t, messages, 3)
-	last := messages[2].(map[string]any)
-	assert.Equal(t, "user", last["role"])
-}
-
-func TestAnthropicStreamError(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusUnauthorized)
-		_, _ = w.Write([]byte(`{"type":"error","error":{"type":"authentication_error","message":"invalid key"}}`))
-	}))
-	defer server.Close()
-
-	p, err := llm.New(llm.Options{Provider: llm.ProviderAnthropic, BaseURL: server.URL, APIKey: "test-key"})
-	require.NoError(t, err)
-
-	stream, err := p.Chat(context.Background(), llm.Request{Model: "claude-test"})
-	require.NoError(t, err)
-
-	assert.False(t, stream.Next())
-	require.Error(t, stream.Err())
-	_ = stream.Close()
-}
-
-func TestAnthropicUnsupportedRole(t *testing.T) {
-	p, err := llm.New(llm.Options{Provider: llm.ProviderAnthropic, APIKey: "test-key"})
 	require.NoError(t, err)
 
 	_, err = p.Chat(context.Background(), llm.Request{

@@ -77,7 +77,7 @@ func Load() (Config, error) {
 	llmProvider := k.String("llm_provider")
 	switch llmProvider {
 	case "mock":
-	case "openai", "anthropic":
+	case "openai":
 		if k.String("llm_api_key") == "" {
 			return Config{}, fmt.Errorf("llm_api_key is required for llm_provider %q", llmProvider)
 		}

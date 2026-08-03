@@ -6,9 +6,8 @@ import (
 )
 
 const (
-	ProviderMock      = "mock"
-	ProviderOpenAI    = "openai"
-	ProviderAnthropic = "anthropic"
+	ProviderMock   = "mock"
+	ProviderOpenAI = "openai"
 )
 
 type Role string
@@ -60,8 +59,6 @@ func New(opts Options) (Provider, error) {
 		return NewMock(), nil
 	case ProviderOpenAI:
 		return newOpenAI(opts), nil
-	case ProviderAnthropic:
-		return newAnthropic(opts), nil
 	default:
 		return nil, fmt.Errorf("llm: unknown provider %q", opts.Provider)
 	}

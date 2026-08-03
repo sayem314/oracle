@@ -128,23 +128,19 @@ func TestLoadInvalidOraclePort(t *testing.T) {
 	require.ErrorContains(t, err, "invalid port")
 }
 
-func TestLLMProviderRealProviders(t *testing.T) {
-	for _, provider := range []string{"openai", "anthropic"} {
-		t.Run(provider, func(t *testing.T) {
-			clearEnv(t)
-			t.Setenv("ORACLE_LLM_PROVIDER", provider)
-			t.Setenv("ORACLE_LLM_API_KEY", "test-key")
-			t.Setenv("ORACLE_LLM_MODEL", "test-model")
-			t.Setenv("ORACLE_LLM_BASE_URL", "http://localhost:11434/v1")
+func TestLLMProviderRealProvider(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("ORACLE_LLM_PROVIDER", "openai")
+	t.Setenv("ORACLE_LLM_API_KEY", "test-key")
+	t.Setenv("ORACLE_LLM_MODEL", "test-model")
+	t.Setenv("ORACLE_LLM_BASE_URL", "http://localhost:11434/v1")
 
-			cfg, err := config.Load()
-			require.NoError(t, err)
-			assert.Equal(t, provider, cfg.LLMProvider)
-			assert.Equal(t, "test-key", cfg.LLMAPIKey)
-			assert.Equal(t, "test-model", cfg.LLMModel)
-			assert.Equal(t, "http://localhost:11434/v1", cfg.LLMBaseURL)
-		})
-	}
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	assert.Equal(t, "openai", cfg.LLMProvider)
+	assert.Equal(t, "test-key", cfg.LLMAPIKey)
+	assert.Equal(t, "test-model", cfg.LLMModel)
+	assert.Equal(t, "http://localhost:11434/v1", cfg.LLMBaseURL)
 }
 
 func TestLLMProviderMissingAPIKey(t *testing.T) {
@@ -158,11 +154,11 @@ func TestLLMProviderMissingAPIKey(t *testing.T) {
 
 func TestLLMProviderMissingModel(t *testing.T) {
 	clearEnv(t)
-	t.Setenv("ORACLE_LLM_PROVIDER", "anthropic")
+	t.Setenv("ORACLE_LLM_PROVIDER", "openai")
 	t.Setenv("ORACLE_LLM_API_KEY", "test-key")
 
 	_, err := config.Load()
-	require.ErrorContains(t, err, `llm_model is required for llm_provider "anthropic"`)
+	require.ErrorContains(t, err, `llm_model is required for llm_provider "openai"`)
 }
 
 func TestLLMProviderInvalid(t *testing.T) {

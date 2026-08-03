@@ -2,6 +2,14 @@
 
 Lightweight ADRs. Latest first.
 
+## 2026-08-03: Single protocol, OpenAI-compatible only
+
+- Supersedes the dual protocol decision below. The Anthropic-compatible implementation and `anthropics/anthropic-sdk-go` are removed; `llm.Provider` now ships OpenAI-compatible (`openai/openai-go`) plus the deterministic mock.
+- The OpenAI protocol is the de facto lingua franca: OpenAI, OpenRouter, LiteLLM, Together, Groq, Mistral, DeepSeek, vLLM, and Ollama all speak it natively, so one protocol plus a configurable base URL reaches everything, including local inference, which matters for a self-hosted assistant. Anthropic models stay reachable through those gateways in OpenAI format.
+- A second protocol adapter doubled code, tests, and SDK quirks without unlocking any provider a gateway cannot already serve. Not worth the burden.
+- Multi-provider support gets revisited only if a need appears that gateways cannot cover, for example native Anthropic prompt caching or cache control once tool calling lands.
+- Everything else from the superseded entry stands: streaming-first iterator, our own domain types, `System` as a first-class request field, mock default with fail-fast config validation, hermetic `httptest` SSE tests.
+
 ## 2026-08-03: LLM provider layer, dual protocol and streaming first
 
 - `llm.Provider` ships with three implementations: OpenAI-compatible (`openai/openai-go` v3), Anthropic-compatible (`anthropics/anthropic-sdk-go`), and a deterministic mock. The two real protocols cover the market: hundreds of providers (OpenRouter, LiteLLM, vLLM, Ollama, gateways) expose one of these two APIs, so a configurable base URL on each unlocks them without per-provider code.
