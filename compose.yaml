@@ -1,0 +1,40 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    environment:
+      # Required, exactly 32 bytes. Compose reads it from the environment or .env.
+      ORACLE_AUTH_SECRET: "${ORACLE_AUTH_SECRET:?set ORACLE_AUTH_SECRET (exactly 32 bytes)}"
+      ORACLE_DATABASE_URL: "file:/data/oracle.db?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(ON)"
+      ORACLE_LOG_LEVEL: "${ORACLE_LOG_LEVEL:-info}"
+      ORACLE_LLM_PROVIDER: "${ORACLE_LLM_PROVIDER:-mock}"
+      ORACLE_LLM_BASE_URL: "${ORACLE_LLM_BASE_URL:-}"
+      ORACLE_LLM_API_KEY: "${ORACLE_LLM_API_KEY:-}"
+      ORACLE_LLM_MODEL: "${ORACLE_LLM_MODEL:-}"
+      ORACLE_PERMISSION_DEFAULT: "${ORACLE_PERMISSION_DEFAULT:-ask}"
+      ORACLE_PERMISSION_RULES: "${ORACLE_PERMISSION_RULES:-}"
+      # Behind TLS set this to true so the session cookie gets the Secure flag.
+      ORACLE_AUTH_COOKIE_SECURE: "${ORACLE_AUTH_COOKIE_SECURE:-false}"
+    volumes:
+      - oracle-data:/data
+    expose:
+      - "8080"
+    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    environment:
+      ORACLE_API_URL: http://api:8080
+      PORT: "3000"
+    ports:
+      - "${ORACLE_PORT:-8080}:3000"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  oracle-data:

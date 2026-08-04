@@ -2,6 +2,16 @@
 
 Lightweight ADRs. Latest first.
 
+## 2026-08-05: Deploy, two containers behind one port (Step 10c)
+
+- The deploy is two containers: `api` (the Go binary) and `web` (the SvelteKit app), joined on a compose network, with only the web port published. Nothing about the app assumed a deploy target until now, so the split follows the process boundary that already existed in dev (vite proxies `/api` and `/auth` to Go).
+- The frontend switched from `adapter-auto` to `adapter-node`. `adapter-auto` is a guessing game for platforms we don't target; the self-hosted story is a plain box running Docker, so a standalone Node server is the honest choice. The adapter emits a self-contained `build/handler.js` (the app has no runtime dependencies, only devDependencies), so the runtime image is `node:22-alpine` + `build/` + one file, no `node_modules`.
+- `apps/web/server.js` is a ~50-line `node:http` server in front of the adapter handler: `/api/`, `/auth/`, and `/health` are reverse-proxied to the Go service (`ORACLE_API_URL`), everything else goes to SvelteKit. A tiny hand-rolled pipe proxy beat adding an nginx container (one fewer moving part, and SSE just works because both directions are streamed) and beat a `http-proxy` dependency. `/health` is proxied so the web container's healthcheck can verify the whole path, web and API, with one request.
+- Healthchecks use `127.0.0.1`, not `localhost`: inside the alpine image `localhost` resolves to `::1` first while the Go server listens on IPv4 only, so the check connected to a closed port. The API image seeds `/data` with `oracle` ownership before `VOLUME`, because a named volume inherits the image directory's ownership on first use and the process runs non-root.
+- The SQLite file lives on a named volume (`oracle-data`) mounted at `/data`; `ORACLE_DATABASE_URL` in compose carries the WAL/busy-timeout/foreign-keys pragmas. Persistence across `restart` and `up/down` cycles is verified. `ORACLE_AUTH_SECRET` is `${...:?}` in compose so a missing secret fails the `up` loudly instead of boot-looping the API (the Go config already rejects it, but only after a container starts). The `.env` developers already keep for local dev satisfies compose interpolation as-is.
+- Build images: the Go side is multi-stage (`golang:1.26-alpine` -> `alpine` + `ca-certificates`, static `CGO_ENABLED=0` binary, non-root); the web side is `oven/bun` (workspace root owns `bun.lock`) -> `node:22-alpine`. A root `.dockerignore` keeps the context free of `.git`, `node_modules`, build output, `.db` files, and `.env*`. `make docker-up`/`docker-down`/`docker-build`/`docker-logs` wrap compose; `ORACLE_PORT` (default 8080) picks the published host port.
+- Deferred: TLS termination (expected behind an operator's reverse proxy; `ORACLE_AUTH_COOKIE_SECURE` is wired for it), image publishing/versions (local builds for now), and backup tooling for the volume.
+
 ## 2026-08-04: Multi-user hardening, admin-managed users (Step 10b)
 
 - Sign-up locks after the first user, so multi-user meant admin-managed accounts. New admin-only endpoints under `/api/v1/users` (list, create, delete) finally consume the `role` column that has been stamped since Step 6. A `requireAdmin` middleware runs after `requireSession` and reads the caller's role; non-admins get 403.

@@ -1,4 +1,4 @@
-.PHONY: help dev run-api run-web build test lint fmt sqlc migration
+.PHONY: help dev run-api run-web build test lint fmt sqlc migration docker-build docker-up docker-down docker-logs
 
 help: ## Show available commands
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
@@ -34,3 +34,15 @@ sqlc: ## Regenerate type-safe query code from SQL (requires sqlc CLI)
 
 migration: ## Create a migration (usage: make migration name=create_foo)
 	go run github.com/pressly/goose/v3/cmd/goose -dir apps/api/migrations create $(name) sql
+
+docker-build: ## Build the Docker images (api + web)
+	docker compose build
+
+docker-up: ## Build and run the full stack with Docker Compose
+	docker compose up --build -d
+
+docker-down: ## Stop the Docker Compose stack
+	docker compose down
+
+docker-logs: ## Tail logs from the Docker Compose stack
+	docker compose logs -f
