@@ -96,6 +96,7 @@ func TestMessageLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, messages, 2)
 	assert.Equal(t, first.ID, messages[0].ID)
+	assert.Equal(t, second.ID, messages[1].ID)
 	assert.Equal(t, "assistant", messages[1].Role)
 	assert.Equal(t, "hello", messages[1].Content)
 
@@ -103,15 +104,42 @@ func TestMessageLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int64(2), count)
 
-	page, err := s.ListMessages(ctx, db.ListMessagesParams{SessionID: session.ID, Limit: 1, Offset: 1})
-	require.NoError(t, err)
-	require.Len(t, page, 1)
-	assert.Equal(t, second.ID, page[0].ID)
-
 	require.NoError(t, s.DeleteMessagesBySession(ctx, session.ID))
 	count, err = s.CountMessages(ctx, session.ID)
 	require.NoError(t, err)
 	assert.Equal(t, int64(0), count)
+}
+
+func TestListMessagesReturnsNewest(t *testing.T) {
+	s, dbConn := openStore(t)
+	ctx := t.Context()
+	seedUser(t, dbConn, 1)
+
+	session, err := s.CreateSession(ctx, db.CreateSessionParams{UserID: 1})
+	require.NoError(t, err)
+
+	var ids []int64
+	for i := 0; i < 5; i++ {
+		m, err := s.AppendMessage(ctx, db.AppendMessageParams{
+			SessionID: session.ID,
+			Role:      "user",
+			Content:   fmt.Sprintf("m%d", i),
+		})
+		require.NoError(t, err)
+		ids = append(ids, m.ID)
+	}
+
+	page, err := s.ListMessages(ctx, db.ListMessagesParams{SessionID: session.ID, Limit: 2})
+	require.NoError(t, err)
+	require.Len(t, page, 2)
+	assert.Equal(t, ids[3], page[0].ID)
+	assert.Equal(t, ids[4], page[1].ID)
+
+	older, err := s.ListMessages(ctx, db.ListMessagesParams{SessionID: session.ID, Limit: 2, Offset: 2})
+	require.NoError(t, err)
+	require.Len(t, older, 2)
+	assert.Equal(t, ids[1], older[0].ID)
+	assert.Equal(t, ids[2], older[1].ID)
 }
 
 func TestDeleteSessionCascadesMessages(t *testing.T) {

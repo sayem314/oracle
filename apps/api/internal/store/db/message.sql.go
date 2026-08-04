@@ -59,10 +59,14 @@ func (q *Queries) DeleteMessagesBySession(ctx context.Context, sessionID int64) 
 
 const listMessages = `-- name: ListMessages :many
 SELECT id, session_id, role, content, created_at
-FROM messages
-WHERE session_id = ?
+FROM (
+	SELECT id, session_id, role, content, created_at
+	FROM messages
+	WHERE session_id = ?
+	ORDER BY id DESC
+	LIMIT ? OFFSET ?
+)
 ORDER BY id ASC
-LIMIT ? OFFSET ?
 `
 
 type ListMessagesParams struct {

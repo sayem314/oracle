@@ -5,10 +5,14 @@ RETURNING *;
 
 -- name: ListMessages :many
 SELECT *
-FROM messages
-WHERE session_id = ?
-ORDER BY id ASC
-LIMIT ? OFFSET ?;
+FROM (
+	SELECT *
+	FROM messages
+	WHERE session_id = ?
+	ORDER BY id DESC
+	LIMIT ? OFFSET ?
+)
+ORDER BY id ASC;
 
 -- name: CountMessages :one
 SELECT COUNT(*)
