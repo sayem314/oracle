@@ -17,7 +17,7 @@ func TestNewRejectsInvalidSecret(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = dbConn.Close() })
 
-	_, err = auth.New(dbConn, []byte("too-short"))
+	_, err = auth.New(dbConn, auth.Options{Secret: []byte("too-short")})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "32 bytes")
 }

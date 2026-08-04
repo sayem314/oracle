@@ -32,7 +32,7 @@ func newTestApp(t *testing.T, provider llm.Provider) (*fiber.App, store.Store, *
 	_, err = store.Migrate(dbConn)
 	require.NoError(t, err)
 
-	a, err := auth.New(dbConn, []byte(testAuthSecret))
+	a, err := auth.New(dbConn, auth.Options{Secret: []byte(testAuthSecret)})
 	require.NoError(t, err)
 
 	s := store.New(dbConn)

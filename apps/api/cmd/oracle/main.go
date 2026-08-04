@@ -45,7 +45,10 @@ func main() {
 		log.Info().Int("applied", applied).Msg("migrations applied")
 	}
 
-	authenticator, err := auth.New(sqlDB, []byte(cfg.AuthSecret))
+	authenticator, err := auth.New(sqlDB, auth.Options{
+		Secret:       []byte(cfg.AuthSecret),
+		CookieSecure: cfg.AuthCookieSecure,
+	})
 	if err != nil {
 		log.Fatal().Err(err).Msg("init auth")
 	}

@@ -39,7 +39,16 @@ type limenAuth struct {
 
 var _ Auth = (*limenAuth)(nil)
 
-func New(dbConn *sql.DB, secret []byte) (Auth, error) {
+// Options configures the Limen-backed authenticator.
+type Options struct {
+	Secret []byte
+	// CookieSecure sets the Secure attribute on the session cookie. Browsers
+	// reject Secure cookies over plain HTTP, so leave it false for local dev
+	// and enable it once the app is served behind TLS.
+	CookieSecure bool
+}
+
+func New(dbConn *sql.DB, opts Options) (Auth, error) {
 	a := &limenAuth{db: dbConn}
 
 	schema := limen.NewDefaultSchemaConfig(
@@ -57,11 +66,14 @@ func New(dbConn *sql.DB, secret []byte) (Auth, error) {
 
 	cfg := &limen.Config{
 		Database: sqladapter.NewSQLite(dbConn),
-		Secret:   secret,
+		Secret:   opts.Secret,
 		Schema:   schema,
 		Session:  limen.NewDefaultSessionConfig(limen.WithBearerEnabled()),
 		Email: limen.NewDefaultEmailConfig(
 			limen.WithEmailVerification(limen.WithDisableEmailVerification()),
+		),
+		HTTP: limen.NewDefaultHTTPConfig(
+			limen.WithHTTPCookieSecure(opts.CookieSecure),
 		),
 		Plugins: []limen.Plugin{credentialpassword.New()},
 	}

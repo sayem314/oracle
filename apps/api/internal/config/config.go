@@ -21,24 +21,26 @@ const defaultDatabaseURL = "file:oracle.db?_pragma=journal_mode(WAL)&_pragma=bus
 const defaultLLMProvider = "mock"
 
 type Config struct {
-	Port        int
-	LogLevel    zerolog.Level
-	DatabaseURL string
-	AuthSecret  string
-	LLMProvider string
-	LLMBaseURL  string
-	LLMAPIKey   string
-	LLMModel    string
+	Port             int
+	LogLevel         zerolog.Level
+	DatabaseURL      string
+	AuthSecret       string
+	AuthCookieSecure bool
+	LLMProvider      string
+	LLMBaseURL       string
+	LLMAPIKey        string
+	LLMModel         string
 }
 
 func Load() (Config, error) {
 	k := koanf.New(".")
 
 	if err := k.Load(confmap.Provider(map[string]any{
-		"port":         8080,
-		"log_level":    "info",
-		"database_url": defaultDatabaseURL,
-		"llm_provider": defaultLLMProvider,
+		"port":               8080,
+		"log_level":          "info",
+		"database_url":       defaultDatabaseURL,
+		"llm_provider":       defaultLLMProvider,
+		"auth_cookie_secure": false,
 	}, "."), nil); err != nil {
 		return Config{}, fmt.Errorf("load defaults: %w", err)
 	}
@@ -95,14 +97,15 @@ func Load() (Config, error) {
 	}
 
 	return Config{
-		Port:        port,
-		LogLevel:    lvl,
-		DatabaseURL: databaseURL,
-		AuthSecret:  authSecret,
-		LLMProvider: llmProvider,
-		LLMBaseURL:  k.String("llm_base_url"),
-		LLMAPIKey:   k.String("llm_api_key"),
-		LLMModel:    k.String("llm_model"),
+		Port:             port,
+		LogLevel:         lvl,
+		DatabaseURL:      databaseURL,
+		AuthSecret:       authSecret,
+		AuthCookieSecure: k.Bool("auth_cookie_secure"),
+		LLMProvider:      llmProvider,
+		LLMBaseURL:       k.String("llm_base_url"),
+		LLMAPIKey:        k.String("llm_api_key"),
+		LLMModel:         k.String("llm_model"),
 	}, nil
 }
 
