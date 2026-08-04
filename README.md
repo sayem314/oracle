@@ -1,5 +1,8 @@
 # oracle
 
+> **Work in progress.** This project is in draft and under active development.
+> Don't run it yet — things will break and interfaces will change. Check back later.
+
 Autonomous personal assistant. Monorepo with a Go backend and a SvelteKit frontend.
 
 ## Layout
