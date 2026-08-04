@@ -1,13 +1,22 @@
 <script lang="ts">
   import { tick } from "svelte";
-  import { streamChat } from "$lib/api";
+  import { streamChat, decideApproval, type ChatStreamCallbacks } from "$lib/api";
 
   interface Message {
     role: "user" | "assistant";
     content: string;
   }
 
+  interface ToolCard {
+    rowId: number | null;
+    callId: string;
+    name: string;
+    result: string;
+    status: "running" | "awaiting" | "done" | "denied";
+  }
+
   let messages = $state<Message[]>([]);
+  let toolCards = $state<ToolCard[]>([]);
   let input = $state("");
   let sessionId = $state<number | null>(null);
   let streaming = $state(false);
@@ -18,46 +27,74 @@
   let field: HTMLTextAreaElement | undefined = $state();
   let aborter: AbortController | null = null;
 
+  let awaitingApproval = $derived(toolCards.some((c) => c.status === "awaiting"));
+
   async function scrollToBottom() {
     await tick();
     if (scroller) scroller.scrollTop = scroller.scrollHeight;
   }
 
-  async function send() {
-    const message = input.trim();
-    if (!message || streaming) return;
+  function updateCard(match: (c: ToolCard) => boolean, patch: Partial<ToolCard>) {
+    toolCards = toolCards.map((c) => (match(c) ? { ...c, ...patch } : c));
+  }
 
+  function makeCallbacks(finalized: () => void): ChatStreamCallbacks {
+    return {
+      onStart: (sid) => {
+        sessionId = sid;
+      },
+      onDelta: (content) => {
+        streamingContent += content;
+        scrollToBottom();
+      },
+      onToolCalls: (calls) => {
+        toolCards = [
+          ...toolCards,
+          ...calls.map((c) => ({ rowId: null, callId: c.id, name: c.name, result: "", status: "running" as const })),
+        ];
+        scrollToBottom();
+      },
+      onToolResult: (toolCallId, _name, result) => {
+        updateCard((c) => c.callId === toolCallId, { result, status: "done" });
+        scrollToBottom();
+      },
+      onApprovalRequired: (approval) => {
+        updateCard((c) => c.callId === approval.toolCallId, { rowId: approval.id, status: "awaiting" });
+        scrollToBottom();
+      },
+      onDecision: (id, result, status) => {
+        updateCard((c) => c.rowId === id, { result, status: status === "denied" ? "denied" : "done" });
+        scrollToBottom();
+      },
+      onDone: (_messageId, finishReason) => {
+        finalized();
+        if (finishReason === "awaiting_approval" && !streamingContent) {
+          resetStream();
+        } else {
+          commit();
+        }
+      },
+      onError: (msg) => {
+        finalized();
+        error = msg;
+        resetStream();
+      },
+    };
+  }
+
+  async function run(request: (cb: ChatStreamCallbacks) => Promise<void>) {
     error = "";
-    input = "";
-    messages = [...messages, { role: "user", content: message }];
     streaming = true;
     streamingContent = "";
     scrollToBottom();
 
     aborter = new AbortController();
     let finalized = false;
+    const cb = makeCallbacks(() => {
+      finalized = true;
+    });
     try {
-      await streamChat(
-        { sessionId, message, signal: aborter.signal },
-        {
-          onStart: (sid) => {
-            sessionId = sid;
-          },
-          onDelta: (content) => {
-            streamingContent += content;
-            scrollToBottom();
-          },
-          onDone: () => {
-            finalized = true;
-            commit();
-          },
-          onError: (msg) => {
-            finalized = true;
-            error = msg;
-            resetStream();
-          },
-        },
-      );
+      await request(cb);
       if (!finalized && streaming) {
         commit();
       }
@@ -70,8 +107,25 @@
     }
   }
 
+  async function send() {
+    const message = input.trim();
+    if (!message || streaming || awaitingApproval) return;
+
+    input = "";
+    messages = [...messages, { role: "user", content: message }];
+    await run((cb) => streamChat({ sessionId, message, signal: aborter?.signal }, cb));
+  }
+
+  async function decide(card: ToolCard, decision: "approve" | "deny") {
+    if (card.rowId === null || streaming) return;
+    const rowId = card.rowId;
+    await run((cb) => decideApproval(rowId, decision, cb));
+  }
+
   function commit() {
-    messages = [...messages, { role: "assistant", content: streamingContent }];
+    if (streamingContent) {
+      messages = [...messages, { role: "assistant", content: streamingContent }];
+    }
     resetStream();
     scrollToBottom();
   }
@@ -92,7 +146,7 @@
 <div class="chat">
   <div class="scroller" bind:this={scroller}>
     <div class="column">
-      {#if messages.length === 0 && !streaming}
+      {#if messages.length === 0 && !streaming && toolCards.length === 0}
         <div class="empty">
           <p>Ask oracle anything to get started.</p>
         </div>
@@ -103,6 +157,27 @@
           <div class="bubble">{m.content}</div>
         </div>
       {/each}
+
+      {#if toolCards.length > 0}
+        <div class="tools">
+          {#each toolCards as card}
+            <div class="tool {card.status}">
+              <span class="tool-name">{card.name}</span>
+              {#if card.status === "awaiting"}
+                <span class="tool-status">needs approval</span>
+                <span class="tool-actions">
+                  <button class="approve" disabled={streaming} onclick={() => decide(card, "approve")}>Approve</button>
+                  <button class="deny" disabled={streaming} onclick={() => decide(card, "deny")}>Deny</button>
+                </span>
+              {:else if card.status === "running"}
+                <span class="tool-status">running...</span>
+              {:else if card.result}
+                <span class="tool-result">{card.result}</span>
+              {/if}
+            </div>
+          {/each}
+        </div>
+      {/if}
 
       {#if streaming}
         <div class="msg assistant">
@@ -135,9 +210,9 @@
         bind:value={input}
         onkeydown={onKeydown}
         rows="1"
-        placeholder="Message oracle"
-        disabled={streaming}></textarea>
-      <button type="submit" class="send" disabled={streaming || !input.trim()}>Send</button>
+        placeholder={awaitingApproval ? "Approve or deny the pending tool call" : "Message oracle"}
+        disabled={streaming || awaitingApproval}></textarea>
+      <button type="submit" class="send" disabled={streaming || awaitingApproval || !input.trim()}>Send</button>
     </form>
   </div>
 </div>
@@ -206,6 +281,76 @@
   .thinking {
     color: var(--text-dim);
     font-style: italic;
+  }
+
+  .tools {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .tool {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--bg-raised);
+    font-size: 13px;
+  }
+
+  .tool-name {
+    font-weight: 600;
+  }
+
+  .tool-status {
+    color: var(--text-dim);
+    font-style: italic;
+  }
+
+  .tool.awaiting {
+    border-color: var(--accent);
+  }
+
+  .tool.denied .tool-result {
+    color: var(--danger);
+  }
+
+  .tool-result {
+    color: var(--text-dim);
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  .tool-actions {
+    display: flex;
+    gap: 6px;
+    margin-left: auto;
+  }
+
+  .tool-actions button {
+    border: none;
+    border-radius: 8px;
+    padding: 5px 12px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  .tool-actions button.approve {
+    background: var(--accent);
+    color: #fff;
+  }
+
+  .tool-actions button.deny {
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    color: inherit;
+  }
+
+  .tool-actions button:disabled {
+    opacity: 0.5;
+    cursor: default;
   }
 
   .error {

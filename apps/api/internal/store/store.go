@@ -25,10 +25,45 @@ type Store interface {
 
 	InsertToolCall(ctx context.Context, arg db.InsertToolCallParams) (db.ToolCall, error)
 	UpdateToolCallResult(ctx context.Context, arg db.UpdateToolCallResultParams) error
+	SetToolCallStatus(ctx context.Context, arg db.SetToolCallStatusParams) error
+	GetToolCall(ctx context.Context, id int64) (db.GetToolCallRow, error)
 	ListToolCallsBySession(ctx context.Context, sessionID int64) ([]db.ToolCall, error)
+	CountPendingApprovalsBySession(ctx context.Context, sessionID int64) (int64, error)
+	ResolveToolCall(ctx context.Context, arg db.UpdateToolCallResultParams, sessionID int64) (int64, error)
 }
 
-var _ Store = (*db.Queries)(nil)
+// sqlStore embeds the generated Queries and adds methods that need more than
+// a single statement.
+type sqlStore struct {
+	*db.Queries
+	conn *sql.DB
+}
+
+var _ Store = (*sqlStore)(nil)
+
+// ResolveToolCall records a tool call decision and returns how many calls in
+// the session still await approval. Update and count run in one transaction so
+// concurrent decisions serialize and exactly one caller sees zero remaining.
+func (s *sqlStore) ResolveToolCall(ctx context.Context, arg db.UpdateToolCallResultParams, sessionID int64) (int64, error) {
+	tx, err := s.conn.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("begin tx: %w", err)
+	}
+	q := s.WithTx(tx)
+	if err := q.UpdateToolCallResult(ctx, arg); err != nil {
+		_ = tx.Rollback()
+		return 0, err
+	}
+	remaining, err := q.CountPendingApprovalsBySession(ctx, sessionID)
+	if err != nil {
+		_ = tx.Rollback()
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("commit tx: %w", err)
+	}
+	return remaining, nil
+}
 
 func Open(dsn string) (*sql.DB, error) {
 	dbConn, err := sql.Open("sqlite", dsn)
@@ -43,5 +78,5 @@ func Open(dsn string) (*sql.DB, error) {
 }
 
 func New(dbConn *sql.DB) Store {
-	return db.New(dbConn)
+	return &sqlStore{Queries: db.New(dbConn), conn: dbConn}
 }

@@ -9,6 +9,52 @@ import (
 	"context"
 )
 
+const countPendingApprovalsBySession = `-- name: CountPendingApprovalsBySession :one
+SELECT count(*)
+FROM tool_calls tc
+JOIN messages m ON m.id = tc.message_id
+WHERE m.session_id = ? AND tc.status = 'awaiting_approval'
+`
+
+func (q *Queries) CountPendingApprovalsBySession(ctx context.Context, sessionID int64) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countPendingApprovalsBySession, sessionID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const getToolCall = `-- name: GetToolCall :one
+SELECT tc.id, tc.message_id, tc.call_id, tc.name, tc.arguments, tc.result, tc.status, tc.created_at, m.session_id, s.user_id
+FROM tool_calls tc
+JOIN messages m ON m.id = tc.message_id
+JOIN sessions s ON s.id = m.session_id
+WHERE tc.id = ?
+`
+
+type GetToolCallRow struct {
+	ToolCall  ToolCall
+	SessionID int64
+	UserID    int64
+}
+
+func (q *Queries) GetToolCall(ctx context.Context, id int64) (GetToolCallRow, error) {
+	row := q.db.QueryRowContext(ctx, getToolCall, id)
+	var i GetToolCallRow
+	err := row.Scan(
+		&i.ToolCall.ID,
+		&i.ToolCall.MessageID,
+		&i.ToolCall.CallID,
+		&i.ToolCall.Name,
+		&i.ToolCall.Arguments,
+		&i.ToolCall.Result,
+		&i.ToolCall.Status,
+		&i.ToolCall.CreatedAt,
+		&i.SessionID,
+		&i.UserID,
+	)
+	return i, err
+}
+
 const insertToolCall = `-- name: InsertToolCall :one
 INSERT INTO tool_calls (message_id, call_id, name, arguments, status)
 VALUES (?, ?, ?, ?, ?)
@@ -83,6 +129,22 @@ func (q *Queries) ListToolCallsBySession(ctx context.Context, sessionID int64) (
 		return nil, err
 	}
 	return items, nil
+}
+
+const setToolCallStatus = `-- name: SetToolCallStatus :exec
+UPDATE tool_calls
+SET status = ?
+WHERE id = ?
+`
+
+type SetToolCallStatusParams struct {
+	Status string
+	ID     int64
+}
+
+func (q *Queries) SetToolCallStatus(ctx context.Context, arg SetToolCallStatusParams) error {
+	_, err := q.db.ExecContext(ctx, setToolCallStatus, arg.Status, arg.ID)
+	return err
 }
 
 const updateToolCallResult = `-- name: UpdateToolCallResult :exec

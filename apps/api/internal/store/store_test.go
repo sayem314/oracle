@@ -244,6 +244,66 @@ func TestToolCallsCascadeWithMessage(t *testing.T) {
 	assert.Empty(t, calls)
 }
 
+func TestResolveToolCallCountsRemaining(t *testing.T) {
+	s, dbConn := openStore(t)
+	ctx := t.Context()
+	seedUser(t, dbConn, 1)
+
+	session, err := s.CreateSession(ctx, db.CreateSessionParams{UserID: 1})
+	require.NoError(t, err)
+	msg, err := s.AppendMessage(ctx, db.AppendMessageParams{SessionID: session.ID, Role: "assistant"})
+	require.NoError(t, err)
+
+	var ids []int64
+	for _, callID := range []string{"call_1", "call_2"} {
+		row, err := s.InsertToolCall(ctx, db.InsertToolCallParams{
+			MessageID: msg.ID, CallID: callID, Name: "clock", Status: "awaiting_approval",
+		})
+		require.NoError(t, err)
+		ids = append(ids, row.ID)
+	}
+
+	remaining, err := s.ResolveToolCall(ctx, db.UpdateToolCallResultParams{
+		ID: ids[0], Result: "12:00", Status: "done",
+	}, session.ID)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), remaining)
+
+	remaining, err = s.ResolveToolCall(ctx, db.UpdateToolCallResultParams{
+		ID: ids[1], Result: "denied by user", Status: "denied",
+	}, session.ID)
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), remaining)
+
+	count, err := s.CountPendingApprovalsBySession(ctx, session.ID)
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), count)
+}
+
+func TestGetToolCallIncludesSessionAndUser(t *testing.T) {
+	s, dbConn := openStore(t)
+	ctx := t.Context()
+	seedUser(t, dbConn, 1)
+
+	session, err := s.CreateSession(ctx, db.CreateSessionParams{UserID: 1})
+	require.NoError(t, err)
+	msg, err := s.AppendMessage(ctx, db.AppendMessageParams{SessionID: session.ID, Role: "assistant"})
+	require.NoError(t, err)
+	created, err := s.InsertToolCall(ctx, db.InsertToolCallParams{
+		MessageID: msg.ID, CallID: "call_1", Name: "clock", Status: "awaiting_approval",
+	})
+	require.NoError(t, err)
+
+	got, err := s.GetToolCall(ctx, created.ID)
+	require.NoError(t, err)
+	assert.Equal(t, created.ID, got.ToolCall.ID)
+	assert.Equal(t, session.ID, got.SessionID)
+	assert.Equal(t, int64(1), got.UserID)
+
+	_, err = s.GetToolCall(ctx, created.ID+999)
+	assert.ErrorIs(t, err, sql.ErrNoRows)
+}
+
 func TestMigrateIsIdempotent(t *testing.T) {
 	dsn := "file:" + filepath.Join(t.TempDir(), "test.db")
 	dbConn, err := store.Open(dsn)

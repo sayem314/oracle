@@ -65,7 +65,7 @@ Go style: `cmd/` per binary, private code under `internal/` grouped by feature. 
 - [x] Step 6: Limen at `/auth/*` + session middleware on `/api/*`
 - [x] Step 7: SvelteKit login + streaming chat UI
 - [x] Step 8: Tool-calling foundation
-- [ ] Step 9: Permission ruleset (allow/deny/ask)
+- [x] Step 9: Permission ruleset (allow/deny/ask)
 - [ ] Step 10: Scheduler, multi-user hardening, deploy
 
 Rationale for these choices lives in `docs/decisions.md`.

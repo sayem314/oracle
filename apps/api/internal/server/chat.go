@@ -11,6 +11,8 @@ import (
 	"github.com/gofiber/fiber/v3/middleware/sse"
 
 	"github.com/sayem314/oracle/apps/api/internal/llm"
+	"github.com/sayem314/oracle/apps/api/internal/permission"
+	"github.com/sayem314/oracle/apps/api/internal/store"
 	"github.com/sayem314/oracle/apps/api/internal/store/db"
 )
 
@@ -19,6 +21,16 @@ const chatHistoryLimit = 1000
 // chatToolRoundLimit caps model->tool->model iterations in a single request so
 // a misbehaving model cannot loop forever.
 const chatToolRoundLimit = 5
+
+const finishAwaitingApproval = "awaiting_approval"
+
+const (
+	toolCallStatusPending          = "pending"
+	toolCallStatusDone             = "done"
+	toolCallStatusError            = "error"
+	toolCallStatusAwaitingApproval = "awaiting_approval"
+	toolCallStatusDenied           = "denied"
+)
 
 type chatLocalsKey struct{}
 
@@ -61,6 +73,28 @@ type chatToolResultEvent struct {
 	ToolCallID string `json:"tool_call_id"`
 	Name       string `json:"name"`
 	Result     string `json:"result"`
+}
+
+type chatApprovalRequiredEvent struct {
+	ID         int64  `json:"id"`
+	ToolCallID string `json:"tool_call_id"`
+	MessageID  int64  `json:"message_id"`
+	Name       string `json:"name"`
+	Arguments  string `json:"arguments"`
+}
+
+// eventSink delivers chat events to a client. The chat and approval handlers
+// both stream the same events, over SSE in either case.
+type eventSink interface {
+	Send(name string, data any) error
+}
+
+type sseSink struct {
+	s *sse.Stream
+}
+
+func (e sseSink) Send(name string, data any) error {
+	return e.s.Event(sse.Event{Name: name, Data: data})
 }
 
 func newChatHandler(deps Deps) fiber.Handler {
@@ -111,6 +145,13 @@ func prepareChat(deps Deps, c fiber.Ctx) (chatContext, error) {
 		if session.UserID != userID {
 			return chatContext{}, fiber.NewError(fiber.StatusNotFound, "session not found")
 		}
+		pending, err := deps.Store.CountPendingApprovalsBySession(ctx, *req.SessionID)
+		if err != nil {
+			return chatContext{}, err
+		}
+		if pending > 0 {
+			return chatContext{}, fiber.NewError(fiber.StatusConflict, "tool approval pending")
+		}
 		sessionID = *req.SessionID
 	}
 
@@ -123,91 +164,113 @@ func prepareChat(deps Deps, c fiber.Ctx) (chatContext, error) {
 		return chatContext{}, err
 	}
 
-	messages, err := deps.Store.ListMessages(ctx, db.ListMessagesParams{
-		SessionID: sessionID,
-		Limit:     chatHistoryLimit,
-	})
+	history, err := buildHistory(ctx, deps.Store, sessionID)
 	if err != nil {
 		return chatContext{}, err
 	}
 
-	toolCalls, err := deps.Store.ListToolCallsBySession(ctx, sessionID)
+	return chatContext{
+		sessionID:     sessionID,
+		userMessageID: userMsg.ID,
+		request:       llm.Request{Model: req.Model, Messages: history},
+	}, nil
+}
+
+// buildHistory reconstructs the provider-facing conversation from the
+// transcript, interleaving tool results after their assistant message.
+func buildHistory(ctx context.Context, s store.Store, sessionID int64) ([]llm.Message, error) {
+	messages, err := s.ListMessages(ctx, db.ListMessagesParams{
+		SessionID: sessionID,
+		Limit:     chatHistoryLimit,
+	})
 	if err != nil {
-		return chatContext{}, err
+		return nil, err
+	}
+
+	toolCalls, err := s.ListToolCallsBySession(ctx, sessionID)
+	if err != nil {
+		return nil, err
 	}
 	callsByMessage := make(map[int64][]db.ToolCall)
 	for _, tc := range toolCalls {
 		callsByMessage[tc.MessageID] = append(callsByMessage[tc.MessageID], tc)
 	}
 
-	llmReq := llm.Request{Model: req.Model}
+	var history []llm.Message
 	for _, m := range messages {
 		msg := llm.Message{Role: llm.Role(m.Role), Content: m.Content}
 		if m.Role == string(llm.RoleAssistant) {
 			for _, tc := range callsByMessage[m.ID] {
 				msg.ToolCalls = append(msg.ToolCalls, llm.ToolCall{ID: tc.CallID, Name: tc.Name, Arguments: tc.Arguments})
 			}
-			llmReq.Messages = append(llmReq.Messages, msg)
+			history = append(history, msg)
 			for _, tc := range callsByMessage[m.ID] {
-				llmReq.Messages = append(llmReq.Messages, llm.Message{Role: llm.RoleTool, Content: tc.Result, ToolCallID: tc.CallID})
+				history = append(history, llm.Message{Role: llm.RoleTool, Content: tc.Result, ToolCallID: tc.CallID})
 			}
 			continue
 		}
-		llmReq.Messages = append(llmReq.Messages, msg)
+		history = append(history, msg)
 	}
-
-	return chatContext{sessionID: sessionID, userMessageID: userMsg.ID, request: llmReq}, nil
+	return history, nil
 }
 
 func streamChat(deps Deps, c fiber.Ctx, s *sse.Stream) error {
 	chat := c.Locals(chatLocalsKey{}).(chatContext)
+	sink := sseSink{s}
 
-	if err := s.Event(sse.Event{Name: "start", Data: chatStartEvent{
+	if err := sink.Send("start", chatStartEvent{
 		SessionID:     chat.sessionID,
 		UserMessageID: chat.userMessageID,
-	}}); err != nil {
+	}); err != nil {
 		return err
 	}
 
-	ctx := s.Context()
-	messages := chat.request.Messages
+	if err := runToolLoop(deps, sink, s.Context(), chat.sessionID, chat.request); err != nil {
+		return sendChatError(s, err)
+	}
+	return nil
+}
+
+// runToolLoop drives model->tool->model rounds until the model produces a
+// final answer, tool approval pauses the run, or the round limit trips.
+// req.Messages holds the conversation so far and is extended each round.
+func runToolLoop(deps Deps, sink eventSink, ctx context.Context, sessionID int64, req llm.Request) error {
 	tools := deps.Tools.Definitions()
 
 	for round := 0; round < chatToolRoundLimit; round++ {
-		req := chat.request
-		req.Messages = messages
-		req.Tools = tools
+		roundReq := req
+		roundReq.Tools = tools
 
-		text, calls, finishReason, err := runChatRound(deps, s, ctx, req)
+		text, calls, finishReason, err := runChatRound(deps, sink, ctx, roundReq)
 		if err != nil {
-			return sendChatError(s, err)
+			return err
 		}
 
 		if len(calls) == 0 {
 			assistant, err := deps.Store.AppendMessage(ctx, db.AppendMessageParams{
-				SessionID: chat.sessionID,
+				SessionID: sessionID,
 				Role:      string(llm.RoleAssistant),
 				Content:   text,
 			})
 			if err != nil {
-				return sendChatError(s, err)
+				return err
 			}
-			if err := deps.Store.TouchSession(ctx, chat.sessionID); err != nil {
-				return sendChatError(s, err)
+			if err := deps.Store.TouchSession(ctx, sessionID); err != nil {
+				return err
 			}
-			return s.Event(sse.Event{Name: "done", Data: chatDoneEvent{
+			return sink.Send("done", chatDoneEvent{
 				MessageID:    assistant.ID,
 				FinishReason: finishReason,
-			}})
+			})
 		}
 
 		assistant, err := deps.Store.AppendMessage(ctx, db.AppendMessageParams{
-			SessionID: chat.sessionID,
+			SessionID: sessionID,
 			Role:      string(llm.RoleAssistant),
 			Content:   text,
 		})
 		if err != nil {
-			return sendChatError(s, err)
+			return err
 		}
 
 		callRows := make([]db.ToolCall, 0, len(calls))
@@ -217,53 +280,101 @@ func streamChat(deps Deps, c fiber.Ctx, s *sse.Stream) error {
 				CallID:    call.ID,
 				Name:      call.Name,
 				Arguments: call.Arguments,
-				Status:    "pending",
+				Status:    toolCallStatusPending,
 			})
 			if err != nil {
-				return sendChatError(s, err)
+				return err
 			}
 			callRows = append(callRows, row)
 		}
 
-		if err := s.Event(sse.Event{Name: "tool_calls", Data: chatToolCallsEvent{
+		if err := sink.Send("tool_calls", chatToolCallsEvent{
 			MessageID: assistant.ID,
 			Calls:     calls,
-		}}); err != nil {
+		}); err != nil {
 			return err
 		}
 
-		messages = append(messages, llm.Message{Role: llm.RoleAssistant, Content: text, ToolCalls: calls})
+		req.Messages = append(req.Messages, llm.Message{Role: llm.RoleAssistant, Content: text, ToolCalls: calls})
+		awaiting := false
 		for i, call := range calls {
-			result, execErr := deps.Tools.Execute(ctx, call.Name, call.Arguments)
-			status := "done"
-			if execErr != nil {
-				result = "tool error: " + execErr.Error()
-				status = "error"
+			switch deps.Permissions.Evaluate(call.Name) {
+			case permission.Allow:
+				result, status := executeToolCall(deps, ctx, call)
+				if err := deps.Store.UpdateToolCallResult(ctx, db.UpdateToolCallResultParams{
+					ID:     callRows[i].ID,
+					Result: result,
+					Status: status,
+				}); err != nil {
+					return err
+				}
+				if err := sink.Send("tool_result", chatToolResultEvent{
+					ToolCallID: call.ID,
+					Name:       call.Name,
+					Result:     result,
+				}); err != nil {
+					return err
+				}
+				req.Messages = append(req.Messages, llm.Message{Role: llm.RoleTool, Content: result, ToolCallID: call.ID})
+			case permission.Deny:
+				result := fmt.Sprintf("denied by policy: tool %q is not allowed", call.Name)
+				if err := deps.Store.UpdateToolCallResult(ctx, db.UpdateToolCallResultParams{
+					ID:     callRows[i].ID,
+					Result: result,
+					Status: toolCallStatusDenied,
+				}); err != nil {
+					return err
+				}
+				if err := sink.Send("tool_result", chatToolResultEvent{
+					ToolCallID: call.ID,
+					Name:       call.Name,
+					Result:     result,
+				}); err != nil {
+					return err
+				}
+				req.Messages = append(req.Messages, llm.Message{Role: llm.RoleTool, Content: result, ToolCallID: call.ID})
+			default:
+				if err := deps.Store.SetToolCallStatus(ctx, db.SetToolCallStatusParams{
+					ID:     callRows[i].ID,
+					Status: toolCallStatusAwaitingApproval,
+				}); err != nil {
+					return err
+				}
+				if err := sink.Send("approval_required", chatApprovalRequiredEvent{
+					ID:         callRows[i].ID,
+					ToolCallID: call.ID,
+					MessageID:  assistant.ID,
+					Name:       call.Name,
+					Arguments:  call.Arguments,
+				}); err != nil {
+					return err
+				}
+				awaiting = true
 			}
-			if err := deps.Store.UpdateToolCallResult(ctx, db.UpdateToolCallResultParams{
-				ID:     callRows[i].ID,
-				Result: result,
-				Status: status,
-			}); err != nil {
-				return sendChatError(s, err)
-			}
-			if err := s.Event(sse.Event{Name: "tool_result", Data: chatToolResultEvent{
-				ToolCallID: call.ID,
-				Name:       call.Name,
-				Result:     result,
-			}}); err != nil {
+		}
+
+		if awaiting {
+			if err := deps.Store.TouchSession(ctx, sessionID); err != nil {
 				return err
 			}
-			messages = append(messages, llm.Message{Role: llm.RoleTool, Content: result, ToolCallID: call.ID})
+			return sink.Send("done", chatDoneEvent{FinishReason: finishAwaitingApproval})
 		}
 	}
 
-	return sendChatError(s, fmt.Errorf("tool call round limit (%d) reached", chatToolRoundLimit))
+	return fmt.Errorf("tool call round limit (%d) reached", chatToolRoundLimit)
+}
+
+func executeToolCall(deps Deps, ctx context.Context, call llm.ToolCall) (result, status string) {
+	result, err := deps.Tools.Execute(ctx, call.Name, call.Arguments)
+	if err != nil {
+		return "tool error: " + err.Error(), toolCallStatusError
+	}
+	return result, toolCallStatusDone
 }
 
 // runChatRound streams one model turn, relaying deltas to the client, and
 // returns the accumulated text, any requested tool calls, and the finish reason.
-func runChatRound(deps Deps, s *sse.Stream, ctx context.Context, req llm.Request) (string, []llm.ToolCall, string, error) {
+func runChatRound(deps Deps, sink eventSink, ctx context.Context, req llm.Request) (string, []llm.ToolCall, string, error) {
 	stream, err := deps.LLM.Chat(ctx, req)
 	if err != nil {
 		return "", nil, "", err
@@ -277,7 +388,7 @@ func runChatRound(deps Deps, s *sse.Stream, ctx context.Context, req llm.Request
 		chunk := stream.Current()
 		if chunk.Delta != "" {
 			text.WriteString(chunk.Delta)
-			if err := s.Event(sse.Event{Name: "delta", Data: chatDeltaEvent{Content: chunk.Delta}}); err != nil {
+			if err := sink.Send("delta", chatDeltaEvent{Content: chunk.Delta}); err != nil {
 				return "", nil, "", err
 			}
 		}

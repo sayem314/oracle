@@ -12,6 +12,8 @@ import (
 	"github.com/knadh/koanf/providers/env"
 	"github.com/knadh/koanf/v2"
 	"github.com/rs/zerolog"
+
+	"github.com/sayem314/oracle/apps/api/internal/permission"
 )
 
 const envPrefix = "ORACLE_"
@@ -21,15 +23,17 @@ const defaultDatabaseURL = "file:oracle.db?_pragma=journal_mode(WAL)&_pragma=bus
 const defaultLLMProvider = "mock"
 
 type Config struct {
-	Port             int
-	LogLevel         zerolog.Level
-	DatabaseURL      string
-	AuthSecret       string
-	AuthCookieSecure bool
-	LLMProvider      string
-	LLMBaseURL       string
-	LLMAPIKey        string
-	LLMModel         string
+	Port              int
+	LogLevel          zerolog.Level
+	DatabaseURL       string
+	AuthSecret        string
+	AuthCookieSecure  bool
+	LLMProvider       string
+	LLMBaseURL        string
+	LLMAPIKey         string
+	LLMModel          string
+	PermissionDefault permission.Verdict
+	PermissionRules   []permission.Rule
 }
 
 func Load() (Config, error) {
@@ -41,6 +45,8 @@ func Load() (Config, error) {
 		"database_url":       defaultDatabaseURL,
 		"llm_provider":       defaultLLMProvider,
 		"auth_cookie_secure": false,
+		"permission_default": "ask",
+		"permission_rules":   "",
 	}, "."), nil); err != nil {
 		return Config{}, fmt.Errorf("load defaults: %w", err)
 	}
@@ -96,16 +102,27 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("invalid llm_provider %q", llmProvider)
 	}
 
+	permissionDefault, err := permission.ParseVerdict(k.String("permission_default"))
+	if err != nil {
+		return Config{}, fmt.Errorf("invalid permission_default: %w", err)
+	}
+	permissionRules, err := permission.ParseRules(k.String("permission_rules"))
+	if err != nil {
+		return Config{}, fmt.Errorf("invalid permission_rules: %w", err)
+	}
+
 	return Config{
-		Port:             port,
-		LogLevel:         lvl,
-		DatabaseURL:      databaseURL,
-		AuthSecret:       authSecret,
-		AuthCookieSecure: k.Bool("auth_cookie_secure"),
-		LLMProvider:      llmProvider,
-		LLMBaseURL:       k.String("llm_base_url"),
-		LLMAPIKey:        k.String("llm_api_key"),
-		LLMModel:         k.String("llm_model"),
+		Port:              port,
+		LogLevel:          lvl,
+		DatabaseURL:       databaseURL,
+		AuthSecret:        authSecret,
+		AuthCookieSecure:  k.Bool("auth_cookie_secure"),
+		LLMProvider:       llmProvider,
+		LLMBaseURL:        k.String("llm_base_url"),
+		LLMAPIKey:         k.String("llm_api_key"),
+		LLMModel:          k.String("llm_model"),
+		PermissionDefault: permissionDefault,
+		PermissionRules:   permissionRules,
 	}, nil
 }
 

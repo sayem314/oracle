@@ -9,15 +9,17 @@ import (
 
 	"github.com/sayem314/oracle/apps/api/internal/auth"
 	"github.com/sayem314/oracle/apps/api/internal/llm"
+	"github.com/sayem314/oracle/apps/api/internal/permission"
 	"github.com/sayem314/oracle/apps/api/internal/store"
 	"github.com/sayem314/oracle/apps/api/internal/tool"
 )
 
 type Deps struct {
-	Store store.Store
-	LLM   llm.Provider
-	Auth  auth.Auth
-	Tools tool.Executor
+	Store       store.Store
+	LLM         llm.Provider
+	Auth        auth.Auth
+	Tools       tool.Executor
+	Permissions *permission.Ruleset
 }
 
 type userIDKey struct{}
@@ -33,6 +35,7 @@ func New(deps Deps) *fiber.App {
 
 	api := app.Group("/api/v1", requireSession(deps.Auth))
 	api.Post("/chat", newChatHandler(deps))
+	api.Post("/approvals", newApprovalHandler(deps))
 
 	return app
 }

@@ -58,11 +58,29 @@ export async function signOut(): Promise<void> {
   await postJSON("/auth/signout", {});
 }
 
+export interface ToolCallInfo {
+  id: string;
+  name: string;
+  arguments: string;
+}
+
+export interface ApprovalRequiredInfo {
+  id: number;
+  toolCallId: string;
+  messageId: number;
+  name: string;
+  arguments: string;
+}
+
 export interface ChatStreamCallbacks {
   onStart?: (sessionId: number, userMessageId: number) => void;
   onDelta?: (content: string) => void;
   onDone?: (messageId: number, finishReason: string) => void;
   onError?: (message: string) => void;
+  onToolCalls?: (calls: ToolCallInfo[]) => void;
+  onToolResult?: (toolCallId: string, name: string, result: string) => void;
+  onApprovalRequired?: (approval: ApprovalRequiredInfo) => void;
+  onDecision?: (id: number, result: string, status: string) => void;
 }
 
 export interface ChatOptions {
@@ -87,6 +105,36 @@ export async function streamChat(opts: ChatOptions, cb: ChatStreamCallbacks): Pr
     throw new Error(await parseError(res));
   }
 
+  await consumeChatStream(res, cb);
+}
+
+// Records an approve/deny decision for a pending tool call. The response is an
+// SSE stream: the decision event first, then the resumed run when every call
+// of the turn has been decided.
+export async function decideApproval(
+  id: number,
+  decision: "approve" | "deny",
+  cb: ChatStreamCallbacks,
+  signal?: AbortSignal,
+): Promise<void> {
+  const res = await fetch("/api/v1/approvals", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
+    body: JSON.stringify({ id, decision }),
+    credentials: "include",
+    signal,
+  });
+
+  if (!res.ok || !res.body) {
+    throw new Error(await parseError(res));
+  }
+
+  await consumeChatStream(res, cb);
+}
+
+async function consumeChatStream(res: Response, cb: ChatStreamCallbacks): Promise<void> {
+  if (!res.body) return;
+
   for await (const { event, data } of parseSSE(res.body)) {
     let payload: Record<string, unknown> = {};
     try {
@@ -107,6 +155,34 @@ export async function streamChat(opts: ChatOptions, cb: ChatStreamCallbacks): Pr
         break;
       case "error":
         cb.onError?.(typeof payload.message === "string" ? payload.message : "stream error");
+        break;
+      case "tool_calls": {
+        const calls = Array.isArray(payload.calls) ? (payload.calls as ToolCallInfo[]) : [];
+        cb.onToolCalls?.(calls);
+        break;
+      }
+      case "tool_result":
+        cb.onToolResult?.(
+          typeof payload.tool_call_id === "string" ? payload.tool_call_id : "",
+          typeof payload.name === "string" ? payload.name : "",
+          typeof payload.result === "string" ? payload.result : "",
+        );
+        break;
+      case "approval_required":
+        cb.onApprovalRequired?.({
+          id: Number(payload.id),
+          toolCallId: typeof payload.tool_call_id === "string" ? payload.tool_call_id : "",
+          messageId: Number(payload.message_id),
+          name: typeof payload.name === "string" ? payload.name : "",
+          arguments: typeof payload.arguments === "string" ? payload.arguments : "",
+        });
+        break;
+      case "decision":
+        cb.onDecision?.(
+          Number(payload.id),
+          typeof payload.result === "string" ? payload.result : "",
+          typeof payload.status === "string" ? payload.status : "",
+        );
         break;
     }
   }

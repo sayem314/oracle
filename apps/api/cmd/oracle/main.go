@@ -15,6 +15,7 @@ import (
 	"github.com/sayem314/oracle/apps/api/internal/auth"
 	"github.com/sayem314/oracle/apps/api/internal/config"
 	"github.com/sayem314/oracle/apps/api/internal/llm"
+	"github.com/sayem314/oracle/apps/api/internal/permission"
 	"github.com/sayem314/oracle/apps/api/internal/server"
 	"github.com/sayem314/oracle/apps/api/internal/store"
 	"github.com/sayem314/oracle/apps/api/internal/tool"
@@ -73,10 +74,11 @@ func main() {
 	}
 
 	app := server.New(server.Deps{
-		Store: store.New(sqlDB),
-		LLM:   provider,
-		Auth:  authenticator,
-		Tools: tools,
+		Store:       store.New(sqlDB),
+		LLM:         provider,
+		Auth:        authenticator,
+		Tools:       tools,
+		Permissions: permission.NewRuleset(cfg.PermissionDefault, cfg.PermissionRules),
 	})
 
 	quit := make(chan os.Signal, 1)

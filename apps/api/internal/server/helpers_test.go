@@ -15,12 +15,15 @@ import (
 
 	"github.com/sayem314/oracle/apps/api/internal/auth"
 	"github.com/sayem314/oracle/apps/api/internal/llm"
+	"github.com/sayem314/oracle/apps/api/internal/permission"
 	"github.com/sayem314/oracle/apps/api/internal/server"
 	"github.com/sayem314/oracle/apps/api/internal/store"
 	"github.com/sayem314/oracle/apps/api/internal/tool"
 )
 
 const testAuthSecret = "0123456789abcdef0123456789abcdef"
+
+var allowAll = permission.NewRuleset(permission.Allow, nil)
 
 func newTestApp(t *testing.T, provider llm.Provider) (*fiber.App, store.Store, *sql.DB) {
 	t.Helper()
@@ -38,6 +41,11 @@ func builtinTools(t *testing.T) *tool.Registry {
 
 func newTestAppWithTools(t *testing.T, provider llm.Provider, tools tool.Executor) (*fiber.App, store.Store, *sql.DB) {
 	t.Helper()
+	return newTestAppFull(t, provider, tools, allowAll)
+}
+
+func newTestAppFull(t *testing.T, provider llm.Provider, tools tool.Executor, perms *permission.Ruleset) (*fiber.App, store.Store, *sql.DB) {
+	t.Helper()
 
 	dsn := "file:" + filepath.Join(t.TempDir(), "test.db") + "?_pragma=foreign_keys(ON)"
 	dbConn, err := store.Open(dsn)
@@ -51,7 +59,7 @@ func newTestAppWithTools(t *testing.T, provider llm.Provider, tools tool.Executo
 	require.NoError(t, err)
 
 	s := store.New(dbConn)
-	app := server.New(server.Deps{Store: s, LLM: provider, Auth: a, Tools: tools})
+	app := server.New(server.Deps{Store: s, LLM: provider, Auth: a, Tools: tools, Permissions: perms})
 	return app, s, dbConn
 }
 

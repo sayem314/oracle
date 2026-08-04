@@ -19,7 +19,7 @@ type Tool struct {
 }
 
 // Executor looks up and runs registered tools. The chat loop depends on this
-// interface; the Step 9 permission ruleset will wrap it.
+// interface and consults the permission ruleset before each Execute.
 type Executor interface {
 	Definitions() []llm.Tool
 	Execute(ctx context.Context, name, arguments string) (string, error)

@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/sayem314/oracle/apps/api/internal/config"
+	"github.com/sayem314/oracle/apps/api/internal/permission"
 )
 
 const testAuthSecret = "0123456789abcdef0123456789abcdef"
@@ -18,6 +19,7 @@ func clearEnv(t *testing.T) {
 	for _, key := range []string{
 		"ORACLE_PORT", "ORACLE_LOG_LEVEL", "ORACLE_DATABASE_URL", "ORACLE_AUTH_SECRET", "PORT",
 		"ORACLE_LLM_PROVIDER", "ORACLE_LLM_BASE_URL", "ORACLE_LLM_API_KEY", "ORACLE_LLM_MODEL",
+		"ORACLE_PERMISSION_DEFAULT", "ORACLE_PERMISSION_RULES",
 	} {
 		if v, ok := os.LookupEnv(key); ok {
 			t.Cleanup(func() { _ = os.Setenv(key, v) })
@@ -43,6 +45,8 @@ func TestLoadDefaults(t *testing.T) {
 	assert.Contains(t, cfg.DatabaseURL, "foreign_keys(ON)")
 	assert.Equal(t, testAuthSecret, cfg.AuthSecret)
 	assert.Equal(t, "mock", cfg.LLMProvider)
+	assert.Equal(t, permission.Ask, cfg.PermissionDefault)
+	assert.Empty(t, cfg.PermissionRules)
 }
 
 func TestDatabaseURLEnvOverride(t *testing.T) {
@@ -202,4 +206,38 @@ func TestLoadShortAuthSecret(t *testing.T) {
 
 	_, err := config.Load()
 	require.ErrorContains(t, err, "auth_secret must be exactly 32 bytes, got 9")
+}
+
+func TestPermissionRulesEnv(t *testing.T) {
+	clearEnv(t)
+	withAuthSecret(t)
+	t.Setenv("ORACLE_PERMISSION_DEFAULT", "allow")
+	t.Setenv("ORACLE_PERMISSION_RULES", "get_time:allow, danger_*:deny")
+
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	assert.Equal(t, permission.Allow, cfg.PermissionDefault)
+	require.Len(t, cfg.PermissionRules, 2)
+	assert.Equal(t, "get_time", cfg.PermissionRules[0].Tool)
+	assert.Equal(t, permission.Allow, cfg.PermissionRules[0].Verdict)
+	assert.Equal(t, "danger_*", cfg.PermissionRules[1].Tool)
+	assert.Equal(t, permission.Deny, cfg.PermissionRules[1].Verdict)
+}
+
+func TestPermissionDefaultInvalid(t *testing.T) {
+	clearEnv(t)
+	withAuthSecret(t)
+	t.Setenv("ORACLE_PERMISSION_DEFAULT", "maybe")
+
+	_, err := config.Load()
+	require.ErrorContains(t, err, "invalid permission_default")
+}
+
+func TestPermissionRulesInvalid(t *testing.T) {
+	clearEnv(t)
+	withAuthSecret(t)
+	t.Setenv("ORACLE_PERMISSION_RULES", "get_time")
+
+	_, err := config.Load()
+	require.ErrorContains(t, err, "invalid permission_rules")
 }
