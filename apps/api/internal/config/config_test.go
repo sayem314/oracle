@@ -11,10 +11,12 @@ import (
 	"github.com/sayem314/oracle/apps/api/internal/config"
 )
 
+const testAuthSecret = "0123456789abcdef0123456789abcdef"
+
 func clearEnv(t *testing.T) {
 	t.Helper()
 	for _, key := range []string{
-		"ORACLE_PORT", "ORACLE_LOG_LEVEL", "ORACLE_DATABASE_URL", "PORT",
+		"ORACLE_PORT", "ORACLE_LOG_LEVEL", "ORACLE_DATABASE_URL", "ORACLE_AUTH_SECRET", "PORT",
 		"ORACLE_LLM_PROVIDER", "ORACLE_LLM_BASE_URL", "ORACLE_LLM_API_KEY", "ORACLE_LLM_MODEL",
 	} {
 		if v, ok := os.LookupEnv(key); ok {
@@ -24,8 +26,14 @@ func clearEnv(t *testing.T) {
 	}
 }
 
+func withAuthSecret(t *testing.T) {
+	t.Helper()
+	t.Setenv("ORACLE_AUTH_SECRET", testAuthSecret)
+}
+
 func TestLoadDefaults(t *testing.T) {
 	clearEnv(t)
+	withAuthSecret(t)
 
 	cfg, err := config.Load()
 	require.NoError(t, err)
@@ -33,11 +41,13 @@ func TestLoadDefaults(t *testing.T) {
 	assert.Equal(t, zerolog.InfoLevel, cfg.LogLevel)
 	assert.Contains(t, cfg.DatabaseURL, "file:oracle.db")
 	assert.Contains(t, cfg.DatabaseURL, "foreign_keys(ON)")
+	assert.Equal(t, testAuthSecret, cfg.AuthSecret)
 	assert.Equal(t, "mock", cfg.LLMProvider)
 }
 
 func TestDatabaseURLEnvOverride(t *testing.T) {
 	clearEnv(t)
+	withAuthSecret(t)
 	t.Setenv("ORACLE_DATABASE_URL", "file::memory:")
 
 	cfg, err := config.Load()
@@ -55,6 +65,7 @@ func TestLoadEmptyDatabaseURL(t *testing.T) {
 
 func TestLoadEnvOverride(t *testing.T) {
 	clearEnv(t)
+	withAuthSecret(t)
 	t.Setenv("ORACLE_PORT", "9090")
 	t.Setenv("ORACLE_LOG_LEVEL", "debug")
 
@@ -67,16 +78,19 @@ func TestLoadEnvOverride(t *testing.T) {
 func TestLoadDotenvFile(t *testing.T) {
 	clearEnv(t)
 	t.Chdir(t.TempDir())
-	require.NoError(t, os.WriteFile(".env", []byte("ORACLE_LOG_LEVEL=warn\n"), 0o600))
+	env := "ORACLE_LOG_LEVEL=warn\nORACLE_AUTH_SECRET=" + testAuthSecret + "\n"
+	require.NoError(t, os.WriteFile(".env", []byte(env), 0o600))
 
 	cfg, err := config.Load()
 	require.NoError(t, err)
 	assert.Equal(t, zerolog.WarnLevel, cfg.LogLevel)
+	assert.Equal(t, testAuthSecret, cfg.AuthSecret)
 }
 
 func TestEnvOverridesDotenv(t *testing.T) {
 	clearEnv(t)
 	t.Chdir(t.TempDir())
+	withAuthSecret(t)
 	require.NoError(t, os.WriteFile(".env", []byte("ORACLE_LOG_LEVEL=warn\n"), 0o600))
 	t.Setenv("ORACLE_LOG_LEVEL", "debug")
 
@@ -87,6 +101,7 @@ func TestEnvOverridesDotenv(t *testing.T) {
 
 func TestPlainPortFallback(t *testing.T) {
 	clearEnv(t)
+	withAuthSecret(t)
 	t.Setenv("PORT", "9091")
 
 	cfg, err := config.Load()
@@ -96,6 +111,7 @@ func TestPlainPortFallback(t *testing.T) {
 
 func TestOraclePortWinsOverPlainPort(t *testing.T) {
 	clearEnv(t)
+	withAuthSecret(t)
 	t.Setenv("PORT", "9091")
 	t.Setenv("ORACLE_PORT", "9092")
 
@@ -130,6 +146,7 @@ func TestLoadInvalidOraclePort(t *testing.T) {
 
 func TestLLMProviderRealProvider(t *testing.T) {
 	clearEnv(t)
+	withAuthSecret(t)
 	t.Setenv("ORACLE_LLM_PROVIDER", "openai")
 	t.Setenv("ORACLE_LLM_API_KEY", "test-key")
 	t.Setenv("ORACLE_LLM_MODEL", "test-model")
@@ -145,6 +162,7 @@ func TestLLMProviderRealProvider(t *testing.T) {
 
 func TestLLMProviderMissingAPIKey(t *testing.T) {
 	clearEnv(t)
+	withAuthSecret(t)
 	t.Setenv("ORACLE_LLM_PROVIDER", "openai")
 	t.Setenv("ORACLE_LLM_MODEL", "gpt-4o")
 
@@ -154,6 +172,7 @@ func TestLLMProviderMissingAPIKey(t *testing.T) {
 
 func TestLLMProviderMissingModel(t *testing.T) {
 	clearEnv(t)
+	withAuthSecret(t)
 	t.Setenv("ORACLE_LLM_PROVIDER", "openai")
 	t.Setenv("ORACLE_LLM_API_KEY", "test-key")
 
@@ -163,8 +182,24 @@ func TestLLMProviderMissingModel(t *testing.T) {
 
 func TestLLMProviderInvalid(t *testing.T) {
 	clearEnv(t)
+	withAuthSecret(t)
 	t.Setenv("ORACLE_LLM_PROVIDER", "gemini")
 
 	_, err := config.Load()
 	require.ErrorContains(t, err, `invalid llm_provider "gemini"`)
+}
+
+func TestLoadMissingAuthSecret(t *testing.T) {
+	clearEnv(t)
+
+	_, err := config.Load()
+	require.ErrorContains(t, err, "auth_secret must be exactly 32 bytes, got 0")
+}
+
+func TestLoadShortAuthSecret(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("ORACLE_AUTH_SECRET", "too-short")
+
+	_, err := config.Load()
+	require.ErrorContains(t, err, "auth_secret must be exactly 32 bytes, got 9")
 }

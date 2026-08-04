@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -17,43 +16,29 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/sayem314/oracle/apps/api/internal/llm"
-	"github.com/sayem314/oracle/apps/api/internal/server"
-	"github.com/sayem314/oracle/apps/api/internal/store"
 	"github.com/sayem314/oracle/apps/api/internal/store/db"
 )
 
-func newTestApp(t *testing.T, provider llm.Provider) (*fiber.App, store.Store) {
-	t.Helper()
-
-	dsn := "file:" + filepath.Join(t.TempDir(), "test.db") + "?_pragma=foreign_keys(ON)"
-	dbConn, err := store.Open(dsn)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = dbConn.Close() })
-
-	_, err = store.Migrate(dbConn)
-	require.NoError(t, err)
-
-	s := store.New(dbConn)
-	return server.New(server.Deps{Store: s, LLM: provider}), s
-}
-
-func postChatJSON(t *testing.T, app *fiber.App, body string) *http.Response {
+func postChatJSON(t *testing.T, app *fiber.App, cookie, body string) *http.Response {
 	t.Helper()
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/chat", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
+	if cookie != "" {
+		req.Header.Set("Cookie", cookie)
+	}
 	res, err := app.Test(req, fiber.TestConfig{Timeout: 0})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = res.Body.Close() })
 	return res
 }
 
-func postChat(t *testing.T, app *fiber.App, body map[string]any) *http.Response {
+func postChat(t *testing.T, app *fiber.App, cookie string, body map[string]any) *http.Response {
 	t.Helper()
 
 	raw, err := json.Marshal(body)
 	require.NoError(t, err)
-	return postChatJSON(t, app, string(raw))
+	return postChatJSON(t, app, cookie, string(raw))
 }
 
 type sseFrame struct {
@@ -185,9 +170,10 @@ func decodeErrorMessage(t *testing.T, res *http.Response) string {
 }
 
 func TestChatNewSession(t *testing.T) {
-	app, s := newTestApp(t, llm.NewMock())
+	app, s, dbConn := newTestApp(t, llm.NewMock())
+	cookie, userID := signUp(t, app, dbConn, "owner@example.com")
 
-	res := postChat(t, app, map[string]any{"message": "hi"})
+	res := postChat(t, app, cookie, map[string]any{"message": "hi"})
 	require.Equal(t, http.StatusOK, res.StatusCode)
 	assert.Contains(t, res.Header.Get("Content-Type"), "text/event-stream")
 
@@ -217,8 +203,9 @@ func TestChatNewSession(t *testing.T) {
 
 	assert.Empty(t, framesByName(frames, "error"))
 
-	_, err := s.GetSession(t.Context(), start.SessionID)
+	session, err := s.GetSession(t.Context(), start.SessionID)
 	require.NoError(t, err)
+	assert.Equal(t, userID, session.UserID)
 
 	count, err := s.CountMessages(t.Context(), start.SessionID)
 	require.NoError(t, err)
@@ -231,17 +218,18 @@ func TestChatStreamsHistoryToProvider(t *testing.T) {
 		{Delta: " world"},
 		{FinishReason: "stop"},
 	}}
-	app, s := newTestApp(t, provider)
+	app, s, dbConn := newTestApp(t, provider)
+	cookie, userID := signUp(t, app, dbConn, "owner@example.com")
 
 	ctx := t.Context()
-	session, err := s.CreateSession(ctx, db.CreateSessionParams{})
+	session, err := s.CreateSession(ctx, db.CreateSessionParams{UserID: userID})
 	require.NoError(t, err)
 	_, err = s.AppendMessage(ctx, db.AppendMessageParams{SessionID: session.ID, Role: "user", Content: "hi"})
 	require.NoError(t, err)
 	_, err = s.AppendMessage(ctx, db.AppendMessageParams{SessionID: session.ID, Role: "assistant", Content: "hello"})
 	require.NoError(t, err)
 
-	res := postChat(t, app, map[string]any{
+	res := postChat(t, app, cookie, map[string]any{
 		"session_id": session.ID,
 		"message":    "how are you?",
 		"model":      "gpt-test",
@@ -280,27 +268,30 @@ func TestChatStreamsHistoryToProvider(t *testing.T) {
 }
 
 func TestChatEmptyMessage(t *testing.T) {
-	app, _ := newTestApp(t, llm.NewMock())
+	app, _, dbConn := newTestApp(t, llm.NewMock())
+	cookie, _ := signUp(t, app, dbConn, "owner@example.com")
 
-	res := postChat(t, app, map[string]any{"message": "   "})
+	res := postChat(t, app, cookie, map[string]any{"message": "   "})
 	require.Equal(t, http.StatusBadRequest, res.StatusCode)
 
 	assert.Equal(t, "message is required", decodeErrorMessage(t, res))
 }
 
 func TestChatInvalidJSON(t *testing.T) {
-	app, _ := newTestApp(t, llm.NewMock())
+	app, _, dbConn := newTestApp(t, llm.NewMock())
+	cookie, _ := signUp(t, app, dbConn, "owner@example.com")
 
-	res := postChatJSON(t, app, "{")
+	res := postChatJSON(t, app, cookie, "{")
 	require.Equal(t, http.StatusBadRequest, res.StatusCode)
 
 	assert.Equal(t, "invalid request body", decodeErrorMessage(t, res))
 }
 
 func TestChatUnknownSession(t *testing.T) {
-	app, _ := newTestApp(t, llm.NewMock())
+	app, _, dbConn := newTestApp(t, llm.NewMock())
+	cookie, _ := signUp(t, app, dbConn, "owner@example.com")
 
-	res := postChat(t, app, map[string]any{"session_id": 999, "message": "hi"})
+	res := postChat(t, app, cookie, map[string]any{"session_id": 999, "message": "hi"})
 	require.Equal(t, http.StatusNotFound, res.StatusCode)
 
 	assert.Equal(t, "session not found", decodeErrorMessage(t, res))
@@ -308,9 +299,10 @@ func TestChatUnknownSession(t *testing.T) {
 
 func TestChatProviderError(t *testing.T) {
 	provider := &fakeProvider{chatErr: errors.New("provider down")}
-	app, s := newTestApp(t, provider)
+	app, s, dbConn := newTestApp(t, provider)
+	cookie, _ := signUp(t, app, dbConn, "owner@example.com")
 
-	res := postChat(t, app, map[string]any{"message": "hi"})
+	res := postChat(t, app, cookie, map[string]any{"message": "hi"})
 	require.Equal(t, http.StatusOK, res.StatusCode)
 
 	frames := parseSSE(t, res.Body)
@@ -339,9 +331,10 @@ func TestChatMidStreamError(t *testing.T) {
 		chunks:    []llm.Chunk{{Delta: "partial"}},
 		streamErr: errors.New("connection lost"),
 	}
-	app, s := newTestApp(t, provider)
+	app, s, dbConn := newTestApp(t, provider)
+	cookie, _ := signUp(t, app, dbConn, "owner@example.com")
 
-	res := postChat(t, app, map[string]any{"message": "hi"})
+	res := postChat(t, app, cookie, map[string]any{"message": "hi"})
 	require.Equal(t, http.StatusOK, res.StatusCode)
 
 	frames := parseSSE(t, res.Body)

@@ -12,6 +12,7 @@ import (
 	"github.com/rs/zerolog/log"
 	"golang.org/x/term"
 
+	"github.com/sayem314/oracle/apps/api/internal/auth"
 	"github.com/sayem314/oracle/apps/api/internal/config"
 	"github.com/sayem314/oracle/apps/api/internal/llm"
 	"github.com/sayem314/oracle/apps/api/internal/server"
@@ -44,6 +45,11 @@ func main() {
 		log.Info().Int("applied", applied).Msg("migrations applied")
 	}
 
+	authenticator, err := auth.New(sqlDB, []byte(cfg.AuthSecret))
+	if err != nil {
+		log.Fatal().Err(err).Msg("init auth")
+	}
+
 	provider, err := llm.New(llm.Options{
 		Provider: cfg.LLMProvider,
 		BaseURL:  cfg.LLMBaseURL,
@@ -58,6 +64,7 @@ func main() {
 	app := server.New(server.Deps{
 		Store: store.New(sqlDB),
 		LLM:   provider,
+		Auth:  authenticator,
 	})
 
 	quit := make(chan os.Signal, 1)

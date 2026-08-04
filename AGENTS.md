@@ -29,6 +29,7 @@ After touching Go modules, run `go mod tidy`.
 apps/api/            Go API (module github.com/sayem314/oracle/apps/api)
   cmd/oracle/        entrypoint, wiring only
   db/queries/        SQL queries (sqlc input)
+  internal/auth/     Auth interface over Limen (credential-password auth, sessions)
   internal/config/   koanf config loading + validation
   internal/llm/      LLM Provider interface, OpenAI-compatible implementation, mock
   internal/server/   HTTP app, routes, handlers (one file per domain)
@@ -50,6 +51,7 @@ Go style: `cmd/` per binary, private code under `internal/` grouped by feature. 
 - Logging via the global `github.com/rs/zerolog/log` package, configured once in `main`. Colored console on a TTY, JSON otherwise. Import and use `log.Info()` directly, no plumbing.
 - Storage: SQLite via sqlc + goose + `modernc.org/sqlite` (pure Go). Write queries in `apps/api/db/queries/*.sql`, then `make sqlc`. Schema lives in `apps/api/migrations/` (goose Up/Down files, embedded, applied at startup). New migration: `make migration name=foo`. Handlers depend on the `store.Store` interface, never on the generated package directly.
 - LLM access via the `llm.Provider` interface (streaming iterator: `Next/Current/Err/Close`). Two implementations: OpenAI-compatible (`openai-go`) and a deterministic mock (the default). Single protocol by choice: `llm_base_url` covers any OpenAI-compatible gateway (OpenRouter, LiteLLM, Ollama, ...), and Anthropic models are reachable through them. Handlers depend on the interface; tests use the mock or `httptest` SSE servers.
+- Auth via Limen behind the `auth.Auth` interface: mounted at `/auth/*` through `middleware/adaptor`, session middleware guards `/api/*`, Limen's tables live in the same SQLite DB as `auth_*` (goose-managed, hand-written for SQLite). Sign-up locks after the first user, who is stamped `admin`.
 - Small steps: only build what the current step needs. Revisit structure when it hurts.
 
 ## Roadmap
@@ -59,7 +61,7 @@ Go style: `cmd/` per binary, private code under `internal/` grouped by feature. 
 - [x] Step 3: SQLite via sqlc + goose (Session/Message schemas, embedded migrations, store)
 - [x] Step 4: LLM `Provider` interface + OpenAI-compatible implementation + mock
 - [x] Step 5: SSE `POST /api/v1/chat` wired to Provider
-- [ ] Step 6: LimenAuth at `/auth/*` + session middleware on `/api/*`
+- [x] Step 6: Limen at `/auth/*` + session middleware on `/api/*`
 - [ ] Step 7: SvelteKit login + streaming chat UI
 - [ ] Step 8: Tool-calling foundation
 - [ ] Step 9: Permission ruleset (allow/deny/ask)

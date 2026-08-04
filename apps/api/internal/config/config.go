@@ -24,6 +24,7 @@ type Config struct {
 	Port        int
 	LogLevel    zerolog.Level
 	DatabaseURL string
+	AuthSecret  string
 	LLMProvider string
 	LLMBaseURL  string
 	LLMAPIKey   string
@@ -74,6 +75,11 @@ func Load() (Config, error) {
 		return Config{}, errors.New("database_url is required")
 	}
 
+	authSecret := k.String("auth_secret")
+	if len(authSecret) != 32 {
+		return Config{}, fmt.Errorf("auth_secret must be exactly 32 bytes, got %d", len(authSecret))
+	}
+
 	llmProvider := k.String("llm_provider")
 	switch llmProvider {
 	case "mock":
@@ -92,6 +98,7 @@ func Load() (Config, error) {
 		Port:        port,
 		LogLevel:    lvl,
 		DatabaseURL: databaseURL,
+		AuthSecret:  authSecret,
 		LLMProvider: llmProvider,
 		LLMBaseURL:  k.String("llm_base_url"),
 		LLMAPIKey:   k.String("llm_api_key"),

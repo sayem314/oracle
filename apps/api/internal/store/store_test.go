@@ -31,10 +31,10 @@ func TestSessionLifecycle(t *testing.T) {
 	s := openStore(t)
 	ctx := t.Context()
 
-	created, err := s.CreateSession(ctx, db.CreateSessionParams{UserID: "user-1", Title: "hello"})
+	created, err := s.CreateSession(ctx, db.CreateSessionParams{UserID: 1, Title: "hello"})
 	require.NoError(t, err)
 	assert.Positive(t, created.ID)
-	assert.Equal(t, "user-1", created.UserID)
+	assert.Equal(t, int64(1), created.UserID)
 	assert.Equal(t, "hello", created.Title)
 	assert.False(t, created.CreatedAt.IsZero())
 
@@ -42,12 +42,12 @@ func TestSessionLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, created, got)
 
-	second, err := s.CreateSession(ctx, db.CreateSessionParams{UserID: "user-1"})
+	second, err := s.CreateSession(ctx, db.CreateSessionParams{UserID: 1})
 	require.NoError(t, err)
-	_, err = s.CreateSession(ctx, db.CreateSessionParams{UserID: "user-2"})
+	_, err = s.CreateSession(ctx, db.CreateSessionParams{UserID: 2})
 	require.NoError(t, err)
 
-	sessions, err := s.ListSessions(ctx, db.ListSessionsParams{UserID: "user-1", Limit: 10})
+	sessions, err := s.ListSessions(ctx, db.ListSessionsParams{UserID: 1, Limit: 10})
 	require.NoError(t, err)
 	require.Len(t, sessions, 2)
 	assert.Equal(t, second.ID, sessions[0].ID)
@@ -68,7 +68,7 @@ func TestMessageLifecycle(t *testing.T) {
 	s := openStore(t)
 	ctx := t.Context()
 
-	session, err := s.CreateSession(ctx, db.CreateSessionParams{UserID: "user-1", Title: "chat"})
+	session, err := s.CreateSession(ctx, db.CreateSessionParams{UserID: 1, Title: "chat"})
 	require.NoError(t, err)
 
 	first, err := s.AppendMessage(ctx, db.AppendMessageParams{SessionID: session.ID, Role: "user", Content: "hi"})
@@ -102,7 +102,7 @@ func TestDeleteSessionCascadesMessages(t *testing.T) {
 	s := openStore(t)
 	ctx := t.Context()
 
-	session, err := s.CreateSession(ctx, db.CreateSessionParams{UserID: "user-1"})
+	session, err := s.CreateSession(ctx, db.CreateSessionParams{UserID: 1})
 	require.NoError(t, err)
 	_, err = s.AppendMessage(ctx, db.AppendMessageParams{SessionID: session.ID, Role: "user", Content: "hi"})
 	require.NoError(t, err)
@@ -122,7 +122,7 @@ func TestMigrateIsIdempotent(t *testing.T) {
 
 	applied, err := store.Migrate(dbConn)
 	require.NoError(t, err)
-	assert.Equal(t, 2, applied)
+	assert.Equal(t, 3, applied)
 
 	applied, err = store.Migrate(dbConn)
 	require.NoError(t, err)

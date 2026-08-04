@@ -5,8 +5,40 @@
 package db
 
 import (
+	"database/sql"
 	"time"
 )
+
+type AuthSession struct {
+	ID         int64
+	Token      string
+	UserID     int64
+	CreatedAt  time.Time
+	ExpiresAt  time.Time
+	LastAccess time.Time
+	Metadata   sql.NullString
+}
+
+type AuthUser struct {
+	ID              int64
+	Email           string
+	Password        sql.NullString
+	EmailVerifiedAt sql.NullTime
+	FirstName       string
+	LastName        string
+	Role            string
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+}
+
+type AuthVerification struct {
+	ID        int64
+	Subject   string
+	Value     string
+	ExpiresAt time.Time
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
 
 type Message struct {
 	ID        int64
@@ -18,7 +50,7 @@ type Message struct {
 
 type Session struct {
 	ID        int64
-	UserID    string
+	UserID    int64
 	Title     string
 	CreatedAt time.Time
 	UpdatedAt time.Time

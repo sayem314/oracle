@@ -16,7 +16,7 @@ RETURNING id, user_id, title, created_at, updated_at
 `
 
 type CreateSessionParams struct {
-	UserID string
+	UserID int64
 	Title  string
 }
 
@@ -71,7 +71,7 @@ LIMIT ? OFFSET ?
 `
 
 type ListSessionsParams struct {
-	UserID string
+	UserID int64
 	Limit  int64
 	Offset int64
 }

@@ -73,21 +73,26 @@ func prepareChat(deps Deps, c fiber.Ctx) (chatContext, error) {
 	}
 
 	ctx := c.Context()
+	userID := c.Locals(userIDKey{}).(int64)
 
 	var sessionID int64
 	switch req.SessionID {
 	case nil:
-		session, err := deps.Store.CreateSession(ctx, db.CreateSessionParams{})
+		session, err := deps.Store.CreateSession(ctx, db.CreateSessionParams{UserID: userID})
 		if err != nil {
 			return chatContext{}, err
 		}
 		sessionID = session.ID
 	default:
-		if _, err := deps.Store.GetSession(ctx, *req.SessionID); err != nil {
+		session, err := deps.Store.GetSession(ctx, *req.SessionID)
+		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return chatContext{}, fiber.NewError(fiber.StatusNotFound, "session not found")
 			}
 			return chatContext{}, err
+		}
+		if session.UserID != userID {
+			return chatContext{}, fiber.NewError(fiber.StatusNotFound, "session not found")
 		}
 		sessionID = *req.SessionID
 	}

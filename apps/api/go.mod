@@ -12,6 +12,9 @@ require (
 	github.com/pressly/goose/v3 v3.27.3
 	github.com/rs/zerolog v1.35.1
 	github.com/stretchr/testify v1.11.1
+	github.com/thecodearcher/limen v0.1.4
+	github.com/thecodearcher/limen/adapters/sql v0.1.2
+	github.com/thecodearcher/limen/plugins/credential-password v0.1.4
 	golang.org/x/term v0.45.0
 	modernc.org/sqlite v1.55.0
 )
@@ -24,6 +27,7 @@ require (
 	github.com/gofiber/schema v1.8.0 // indirect
 	github.com/gofiber/utils/v2 v2.1.1 // indirect
 	github.com/google/uuid v1.6.0 // indirect
+	github.com/jmoiron/sqlx v1.4.0 // indirect
 	github.com/joho/godotenv v1.5.1 // indirect
 	github.com/klauspost/compress v1.19.1 // indirect
 	github.com/knadh/koanf/maps v0.1.2 // indirect

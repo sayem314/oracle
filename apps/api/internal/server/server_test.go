@@ -8,11 +8,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/sayem314/oracle/apps/api/internal/server"
+	"github.com/sayem314/oracle/apps/api/internal/llm"
 )
 
 func TestUnknownRoute(t *testing.T) {
-	app := server.New(server.Deps{})
+	app, _, _ := newTestApp(t, llm.NewMock())
 
 	res, err := app.Test(httptest.NewRequest(http.MethodGet, "/nope", nil))
 	require.NoError(t, err)

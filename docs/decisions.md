@@ -2,6 +2,19 @@
 
 Lightweight ADRs. Latest first.
 
+## 2026-08-03: Limen auth, first-user gate, and session middleware
+
+- Limen (`github.com/thecodearcher/limen`, better-auth style) supplies credential-password auth, sessions, and rate limiting. It is net/http based, so it mounts at `/auth/*` through Fiber's official `middleware/adaptor`, and the `/api/v1` session middleware converts requests back with `adaptor.ConvertRequest` to call `auth.GetSession`. Exactly the shape the Fiber ADR anticipated.
+- Limen sits behind our own `auth.Auth` interface (`Handler`, `UserID`, `HasUsers`). Handlers and middleware depend on the interface, not the library, per project convention.
+- The SQL adapter (`adapters/sql`, sqlx under the hood) wraps the same `*sql.DB` as our store, so auth and chat share one SQLite pool as planned.
+- Limen's default tables (`users`, `sessions`) collide with our chat `sessions` table, so its schema is renamed to `auth_users`, `auth_sessions`, `auth_verifications` via Limen's schema config. `accounts` (OAuth-only) and `rate_limits` (limiter defaults to the in-memory cache store) are not created until needed.
+- Migrations stay goose-managed and hand-written for SQLite: Limen's CLI generates migrations for postgres/mysql only. Limen writes `time.Time` through modernc's default `t.String()` encoding, and modernc parses `DATETIME` columns back to `time.Time` on read, so the round trip works without DSN changes; time columns are declared `DATETIME` for that reason.
+- Sessions are cookie-based with bearer tokens enabled (`WithBearerEnabled`): the web app uses cookies now, and mobile/API clients can use `Authorization: Bearer` later without server changes. Email verification is disabled; there is no mail infrastructure on a self-hosted box.
+- Sign-up is open until the first user exists, then permanently locked (403). A gate in front of `/auth/*` checks the user count on sign-up requests, and a Limen additional-fields callback stamps `role` at creation: the users table is empty exactly when the first account is created, so it becomes `admin`. Known edge: two concurrent first sign-ups could both see an empty table; harmless on a single-user box. Role is stamped now but consumed by nothing yet; permission work lands with Step 9.
+- The sessions table `user_id` changed from TEXT to INTEGER by editing migration 00001 in place, matching Limen's int64 user IDs; safe because the app is pre-launch with no deployed databases. Chat session creation now carries the authenticated user, and accessing a session owned by someone else returns 404 (no existence leak).
+- Limen's `BaseURL` stays at its localhost default: it only matters for building email/OAuth URLs, both unused. Revisit if either lands.
+- Config gains `auth_secret` (ORACLE_AUTH_SECRET), required, exactly 32 bytes, validated at load like other config.
+
 ## 2026-08-03: SSE chat endpoint, pre-stream validation and named events
 
 - `POST /api/v1/chat` streams over Fiber v3's built-in `sse` middleware, which owns the transport (headers, framing, flushing, 15s heartbeat comments, disconnect detection). Application events stay ours: named events `start`, `delta`, `done`, `error`, JSON payloads. Named events are self-describing for the Step 7 SvelteKit client, which consumes them via fetch + ReadableStream anyway (EventSource is GET-only, so no loss).
@@ -78,7 +91,5 @@ Lightweight ADRs. Latest first.
 
 ## Planned (not built yet)
 
-- LimenAuth shares the same SQLite `*sql.DB`.
-- LimenAuth for auth (credential-password + JWT), mounted at `/auth/*`, guarding `/api/*` via `adaptor.ConvertRequest`. Kept behind our own `auth` interface due to project youth.
-- Per-user LLM credentials: once LimenAuth lands, provider, API key, base URL, and model move from env config to per-user settings in the database, and chat requests can carry a model override so users switch models mid-conversation, the way modern agent and IDE tools do. Whether env config is removed or kept as an admin-supplied default is decided then.
+- Per-user LLM credentials: provider, API key, base URL, and model move from env config to per-user settings in the database (auth has landed), and chat requests can carry a model override so users switch models mid-conversation, the way modern agent and IDE tools do. Whether env config is removed or kept as an admin-supplied default is decided then.
 - API-first: OpenAPI spec. Codegen approach evaluated per step.
