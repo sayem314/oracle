@@ -8,18 +8,14 @@ import (
 	"github.com/gofiber/fiber/v3/middleware/adaptor"
 
 	"github.com/sayem314/oracle/apps/api/internal/auth"
-	"github.com/sayem314/oracle/apps/api/internal/llm"
-	"github.com/sayem314/oracle/apps/api/internal/permission"
+	"github.com/sayem314/oracle/apps/api/internal/chat"
 	"github.com/sayem314/oracle/apps/api/internal/store"
-	"github.com/sayem314/oracle/apps/api/internal/tool"
 )
 
 type Deps struct {
-	Store       store.Store
-	LLM         llm.Provider
-	Auth        auth.Auth
-	Tools       tool.Executor
-	Permissions *permission.Ruleset
+	Store store.Store
+	Auth  auth.Auth
+	Chat  *chat.Engine
 }
 
 type userIDKey struct{}
@@ -36,6 +32,10 @@ func New(deps Deps) *fiber.App {
 	api := app.Group("/api/v1", requireSession(deps.Auth))
 	api.Post("/chat", newChatHandler(deps))
 	api.Post("/approvals", newApprovalHandler(deps))
+	api.Get("/jobs", newListJobsHandler(deps))
+	api.Post("/jobs", newCreateJobHandler(deps))
+	api.Patch("/jobs/:id", newUpdateJobHandler(deps))
+	api.Delete("/jobs/:id", newDeleteJobHandler(deps))
 
 	return app
 }

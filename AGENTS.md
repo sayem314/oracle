@@ -66,6 +66,8 @@ Go style: `cmd/` per binary, private code under `internal/` grouped by feature. 
 - [x] Step 7: SvelteKit login + streaming chat UI
 - [x] Step 8: Tool-calling foundation
 - [x] Step 9: Permission ruleset (allow/deny/ask)
-- [ ] Step 10: Scheduler, multi-user hardening, deploy
+- [x] Step 10a: Scheduler (cron jobs, headless runs)
+- [ ] Step 10b: Multi-user hardening (admin-managed users, session APIs)
+- [ ] Step 10c: Deploy (Docker, adapter-node)
 
 Rationale for these choices lives in `docs/decisions.md`.

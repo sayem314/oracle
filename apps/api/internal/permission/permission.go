@@ -48,6 +48,16 @@ func (rs *Ruleset) Evaluate(toolName string) Verdict {
 	return verdict
 }
 
+// EvaluateHeadless decides unattended runs where nobody can answer an ask, so
+// ask is downgraded to deny while allow and deny stand.
+func (rs *Ruleset) EvaluateHeadless(toolName string) Verdict {
+	v := rs.Evaluate(toolName)
+	if v == Ask {
+		return Deny
+	}
+	return v
+}
+
 func matches(pattern, name string) bool {
 	ok, err := path.Match(pattern, name)
 	return err == nil && ok

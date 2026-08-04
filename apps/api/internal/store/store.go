@@ -30,6 +30,16 @@ type Store interface {
 	ListToolCallsBySession(ctx context.Context, sessionID int64) ([]db.ToolCall, error)
 	CountPendingApprovalsBySession(ctx context.Context, sessionID int64) (int64, error)
 	ResolveToolCall(ctx context.Context, arg db.UpdateToolCallResultParams, sessionID int64) (int64, error)
+
+	CreateJob(ctx context.Context, arg db.CreateJobParams) (db.Job, error)
+	GetJob(ctx context.Context, id int64) (db.Job, error)
+	ListJobsByUser(ctx context.Context, userID int64) ([]db.Job, error)
+	UpdateJob(ctx context.Context, arg db.UpdateJobParams) (db.Job, error)
+	DeleteJob(ctx context.Context, id int64) error
+	ListDueJobs(ctx context.Context, nextRunAt sql.NullTime) ([]db.Job, error)
+	ClaimJob(ctx context.Context, arg db.ClaimJobParams) (int64, error)
+	SetJobStatus(ctx context.Context, arg db.SetJobStatusParams) error
+	SetJobSession(ctx context.Context, arg db.SetJobSessionParams) error
 }
 
 // sqlStore embeds the generated Queries and adds methods that need more than

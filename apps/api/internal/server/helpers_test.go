@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/sayem314/oracle/apps/api/internal/auth"
+	"github.com/sayem314/oracle/apps/api/internal/chat"
 	"github.com/sayem314/oracle/apps/api/internal/llm"
 	"github.com/sayem314/oracle/apps/api/internal/permission"
 	"github.com/sayem314/oracle/apps/api/internal/server"
@@ -59,7 +60,8 @@ func newTestAppFull(t *testing.T, provider llm.Provider, tools tool.Executor, pe
 	require.NoError(t, err)
 
 	s := store.New(dbConn)
-	app := server.New(server.Deps{Store: s, LLM: provider, Auth: a, Tools: tools, Permissions: perms})
+	engine := &chat.Engine{Store: s, LLM: provider, Tools: tools, Permissions: perms}
+	app := server.New(server.Deps{Store: s, Auth: a, Chat: engine})
 	return app, s, dbConn
 }
 

@@ -13,9 +13,11 @@ import (
 	"golang.org/x/term"
 
 	"github.com/sayem314/oracle/apps/api/internal/auth"
+	"github.com/sayem314/oracle/apps/api/internal/chat"
 	"github.com/sayem314/oracle/apps/api/internal/config"
 	"github.com/sayem314/oracle/apps/api/internal/llm"
 	"github.com/sayem314/oracle/apps/api/internal/permission"
+	"github.com/sayem314/oracle/apps/api/internal/scheduler"
 	"github.com/sayem314/oracle/apps/api/internal/server"
 	"github.com/sayem314/oracle/apps/api/internal/store"
 	"github.com/sayem314/oracle/apps/api/internal/tool"
@@ -73,12 +75,23 @@ func main() {
 		}
 	}
 
-	app := server.New(server.Deps{
-		Store:       store.New(sqlDB),
+	st := store.New(sqlDB)
+	ruleset := permission.NewRuleset(cfg.PermissionDefault, cfg.PermissionRules)
+	engine := &chat.Engine{
+		Store:       st,
 		LLM:         provider,
-		Auth:        authenticator,
 		Tools:       tools,
-		Permissions: permission.NewRuleset(cfg.PermissionDefault, cfg.PermissionRules),
+		Permissions: ruleset,
+	}
+
+	sched := scheduler.New(st, engine.AsHeadless(), scheduler.DefaultInterval)
+	sched.Start()
+	log.Info().Msg("scheduler started")
+
+	app := server.New(server.Deps{
+		Store: st,
+		Auth:  authenticator,
+		Chat:  engine,
 	})
 
 	quit := make(chan os.Signal, 1)
@@ -87,6 +100,7 @@ func main() {
 	go func() {
 		<-quit
 		log.Info().Msg("shutting down")
+		sched.Stop()
 		if err := app.Shutdown(); err != nil {
 			log.Error().Err(err).Msg("shutdown")
 		}

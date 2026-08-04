@@ -34,6 +34,26 @@ async function postJSON(path: string, payload: unknown): Promise<Response> {
   return res;
 }
 
+async function patchJSON(path: string, payload: unknown): Promise<Response> {
+  const res = await fetch(path, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+    credentials: "include",
+  });
+  if (!res.ok) {
+    throw new Error(await parseError(res));
+  }
+  return res;
+}
+
+async function deleteRequest(path: string): Promise<void> {
+  const res = await fetch(path, { method: "DELETE", credentials: "include" });
+  if (!res.ok) {
+    throw new Error(await parseError(res));
+  }
+}
+
 // Returns the signed-in user, or null when there is no valid session.
 export async function getSession(): Promise<User | null> {
   const res = await fetch("/auth/me", { credentials: "include" });
@@ -186,4 +206,42 @@ async function consumeChatStream(res: Response, cb: ChatStreamCallbacks): Promis
         break;
     }
   }
+}
+
+export interface Job {
+  id: number;
+  session_id: number | null;
+  schedule: string;
+  prompt: string;
+  enabled: boolean;
+  last_run_at: string | null;
+  last_status: string;
+  next_run_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export async function listJobs(): Promise<Job[]> {
+  const res = await fetch("/api/v1/jobs", { credentials: "include" });
+  if (!res.ok) {
+    throw new Error(await parseError(res));
+  }
+  return (await res.json()) as Job[];
+}
+
+export async function createJob(input: { schedule: string; prompt: string; session_id?: number }): Promise<Job> {
+  const res = await postJSON("/api/v1/jobs", input);
+  return (await res.json()) as Job;
+}
+
+export async function updateJob(
+  id: number,
+  patch: { schedule?: string; prompt?: string; enabled?: boolean },
+): Promise<Job> {
+  const res = await patchJSON(`/api/v1/jobs/${id}`, patch);
+  return (await res.json()) as Job;
+}
+
+export async function deleteJob(id: number): Promise<void> {
+  await deleteRequest(`/api/v1/jobs/${id}`);
 }

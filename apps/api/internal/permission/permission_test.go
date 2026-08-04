@@ -59,6 +59,20 @@ func TestEvaluateNoRules(t *testing.T) {
 	assert.Equal(t, permission.Ask, rs.Evaluate("anything"))
 }
 
+func TestEvaluateHeadless(t *testing.T) {
+	rs := permission.NewRuleset(permission.Ask, []permission.Rule{
+		{Tool: "get_time", Verdict: permission.Allow},
+		{Tool: "risky_*", Verdict: permission.Ask},
+		{Tool: "danger_*", Verdict: permission.Deny},
+	})
+
+	// allow and deny stand; ask (explicit or default) becomes deny.
+	assert.Equal(t, permission.Allow, rs.EvaluateHeadless("get_time"))
+	assert.Equal(t, permission.Deny, rs.EvaluateHeadless("risky_call"))
+	assert.Equal(t, permission.Deny, rs.EvaluateHeadless("danger_write"))
+	assert.Equal(t, permission.Deny, rs.EvaluateHeadless("unmatched_defaults_to_ask"))
+}
+
 func TestParseVerdict(t *testing.T) {
 	for _, valid := range []string{"allow", "deny", "ask", " ALLOW ", "Ask"} {
 		v, err := permission.ParseVerdict(valid)

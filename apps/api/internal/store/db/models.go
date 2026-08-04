@@ -40,6 +40,20 @@ type AuthVerification struct {
 	UpdatedAt time.Time
 }
 
+type Job struct {
+	ID         int64
+	UserID     int64
+	SessionID  sql.NullInt64
+	Schedule   string
+	Prompt     string
+	Enabled    int64
+	LastRunAt  sql.NullTime
+	LastStatus string
+	NextRunAt  sql.NullTime
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
+}
+
 type Message struct {
 	ID        int64
 	SessionID int64

@@ -10,6 +10,7 @@ require (
 	github.com/knadh/koanf/v2 v2.3.5
 	github.com/openai/openai-go/v3 v3.49.0
 	github.com/pressly/goose/v3 v3.27.3
+	github.com/robfig/cron/v3 v3.0.1
 	github.com/rs/zerolog v1.35.1
 	github.com/stretchr/testify v1.11.1
 	github.com/thecodearcher/limen v0.1.4

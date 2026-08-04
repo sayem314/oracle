@@ -7,6 +7,7 @@ import (
 	"github.com/gofiber/fiber/v3"
 	"github.com/gofiber/fiber/v3/middleware/sse"
 
+	"github.com/sayem314/oracle/apps/api/internal/chat"
 	"github.com/sayem314/oracle/apps/api/internal/llm"
 	"github.com/sayem314/oracle/apps/api/internal/store/db"
 )
@@ -28,12 +29,6 @@ type approvalContext struct {
 type approvalRequest struct {
 	ID       int64  `json:"id"`
 	Decision string `json:"decision"`
-}
-
-type approvalDecisionEvent struct {
-	ID     int64  `json:"id"`
-	Result string `json:"result"`
-	Status string `json:"status"`
 }
 
 func newApprovalHandler(deps Deps) fiber.Handler {
@@ -68,7 +63,7 @@ func newApprovalHandler(deps Deps) fiber.Handler {
 		if call.UserID != userID {
 			return fiber.NewError(fiber.StatusNotFound, "tool call not found")
 		}
-		if call.ToolCall.Status != toolCallStatusAwaitingApproval {
+		if call.ToolCall.Status != chat.StatusAwaitingApproval {
 			return fiber.NewError(fiber.StatusConflict, "tool call is not awaiting approval")
 		}
 
@@ -87,13 +82,13 @@ func streamApproval(deps Deps, c fiber.Ctx, s *sse.Stream) error {
 
 	var result, status string
 	if approval.decision == approvalDecisionApprove {
-		result, status = executeToolCall(deps, ctx, llm.ToolCall{
+		result, status = deps.Chat.ExecuteToolCall(ctx, llm.ToolCall{
 			ID:        call.ToolCall.CallID,
 			Name:      call.ToolCall.Name,
 			Arguments: call.ToolCall.Arguments,
 		})
 	} else {
-		result, status = deniedByUserResult, toolCallStatusDenied
+		result, status = deniedByUserResult, chat.StatusDenied
 	}
 
 	remaining, err := deps.Store.ResolveToolCall(ctx, db.UpdateToolCallResultParams{
@@ -105,7 +100,7 @@ func streamApproval(deps Deps, c fiber.Ctx, s *sse.Stream) error {
 		return sendChatError(s, err)
 	}
 
-	if err := sink.Send("decision", approvalDecisionEvent{
+	if err := sink.Send("decision", chat.DecisionEvent{
 		ID:     call.ToolCall.ID,
 		Result: result,
 		Status: status,
@@ -114,14 +109,14 @@ func streamApproval(deps Deps, c fiber.Ctx, s *sse.Stream) error {
 	}
 
 	if remaining > 0 {
-		return sink.Send("done", chatDoneEvent{FinishReason: finishAwaitingApproval})
+		return sink.Send("done", chat.DoneEvent{FinishReason: chat.FinishAwaitingApproval})
 	}
 
-	history, err := buildHistory(ctx, deps.Store, call.SessionID)
+	history, err := deps.Chat.BuildHistory(ctx, call.SessionID)
 	if err != nil {
 		return sendChatError(s, err)
 	}
-	if err := runToolLoop(deps, sink, ctx, call.SessionID, llm.Request{Messages: history}); err != nil {
+	if err := deps.Chat.Run(ctx, sink, call.SessionID, llm.Request{Messages: history}); err != nil {
 		return sendChatError(s, err)
 	}
 	return nil

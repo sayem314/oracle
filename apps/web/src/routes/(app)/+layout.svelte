@@ -1,9 +1,12 @@
 <script lang="ts">
   import { goto } from "$app/navigation";
+  import { page } from "$app/state";
   import { signOut } from "$lib/api";
   import type { LayoutData } from "./$types";
 
   let { data, children } = $props<{ data: LayoutData; children: import("svelte").Snippet }>();
+
+  let onJobs = $derived(page.url.pathname.startsWith("/jobs"));
 
   async function onSignOut() {
     try {
@@ -16,7 +19,13 @@
 
 <div class="shell">
   <header>
-    <span class="brand">oracle</span>
+    <div class="left">
+      <span class="brand">oracle</span>
+      <nav>
+        <a href="/" class:active={!onJobs}>Chat</a>
+        <a href="/jobs" class:active={onJobs}>Jobs</a>
+      </nav>
+    </div>
     <div class="right">
       <span class="email">{data.user.email}</span>
       <button type="button" onclick={onSignOut}>Sign out</button>
@@ -44,9 +53,38 @@
     background: var(--bg-raised);
   }
 
+  .left {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+  }
+
   .brand {
     font-weight: 700;
     letter-spacing: 0.5px;
+  }
+
+  nav {
+    display: flex;
+    gap: 4px;
+  }
+
+  nav a {
+    color: var(--text-dim);
+    padding: 6px 10px;
+    border-radius: 8px;
+    font-size: 14px;
+    text-decoration: none;
+  }
+
+  nav a:hover {
+    color: var(--text);
+    text-decoration: none;
+  }
+
+  nav a.active {
+    color: var(--text);
+    background: var(--bg-input);
   }
 
   .right {
