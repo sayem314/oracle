@@ -2,6 +2,15 @@
 
 Lightweight ADRs. Latest first.
 
+## 2026-08-04: Multi-user hardening, admin-managed users (Step 10b)
+
+- Sign-up locks after the first user, so multi-user meant admin-managed accounts. New admin-only endpoints under `/api/v1/users` (list, create, delete) finally consume the `role` column that has been stamped since Step 6. A `requireAdmin` middleware runs after `requireSession` and reads the caller's role; non-admins get 403.
+- User creation goes through Limen's credential-password plugin API (`SignUpWithCredentialAndPassword`) rather than a raw INSERT, so the password is hashed and policy-checked (length/upper/number) by the same code path as self sign-up. An explicit `role: "user"` additional field is passed and wins over the first-user hook, so an admin can never accidentally mint another admin. Limen's typed errors are mapped inside the `auth` package to an `auth.Error{Status, Message}` — 422 collapses to 400 to match the API's validation style, 409 stays for duplicate email — keeping Limen types behind the `auth.Auth` interface.
+- An admin cannot delete themselves (400): it would strand the account mid-session and, for the only admin, lock the instance out of admin. Deletion of others cascades through the FK chain (sessions, messages, tool_calls, Limen auth_sessions) built in the Step-6-era migrations, so `DeleteUser` is a single statement. Deleting the last admin is deliberately not blocked; on a self-hosted box that is an operator choice, and blocking it would need a notion of "last admin" we don't otherwise need.
+- Sessions grew the API they always had in the store but never exposed: list, rename, delete, plus `GET /sessions/:id/messages` which returns the transcript with each assistant message's tool calls nested, so the client can re-render a session without re-deriving anything. All four are ownership-checked with the same 404-for-foreign pattern as chat and jobs.
+- The SvelteKit chat gained a session sidebar (new/open/rename/delete) backed by those endpoints, and the transcript is now a single ordered block list (user/assistant/tool) that renders both live streams and loaded history the same way. An admin-only Users page (create/delete, role badges) sits behind a nav link that only renders for `role: "admin"`.
+- Deferred: per-user permission rulesets and "always allow" promotion (the ruleset is still global config), password change/reset endpoints (Limen has them; no UI need yet), and listing a user's active Limen sessions.
+
 ## 2026-08-04: Scheduler, headless runs (Step 10a)
 
 - Step 10 was split into three sub-steps rather than built as one: 10a scheduler, 10b multi-user hardening, 10c deploy. They are independent and each is a meaningful increment; the small-steps convention wins. Order chosen: scheduler first (the feature that makes oracle proactive), then multi-user, then deploy last once features settle.

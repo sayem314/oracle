@@ -6,7 +6,8 @@
 
   let { data, children } = $props<{ data: LayoutData; children: import("svelte").Snippet }>();
 
-  let onJobs = $derived(page.url.pathname.startsWith("/jobs"));
+  let isAdmin = $derived(data.user.role === "admin");
+  let path = $derived(page.url.pathname);
 
   async function onSignOut() {
     try {
@@ -22,8 +23,11 @@
     <div class="left">
       <span class="brand">oracle</span>
       <nav>
-        <a href="/" class:active={!onJobs}>Chat</a>
-        <a href="/jobs" class:active={onJobs}>Jobs</a>
+        <a href="/" class:active={path === "/"}>Chat</a>
+        <a href="/jobs" class:active={path.startsWith("/jobs")}>Jobs</a>
+        {#if isAdmin}
+          <a href="/users" class:active={path.startsWith("/users")}>Users</a>
+        {/if}
       </nav>
     </div>
     <div class="right">

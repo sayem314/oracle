@@ -39,7 +39,7 @@ func main() {
 	if err != nil {
 		log.Fatal().Err(err).Msg("open database")
 	}
-	defer func() { _ = sqlDB.Close() }()
+	defer sqlDB.Close() //nolint:errcheck
 
 	applied, err := store.Migrate(sqlDB)
 	if err != nil {

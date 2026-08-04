@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/openai/openai-go/v3"
@@ -181,7 +181,7 @@ func (s *openAIStream) finalizeCalls() []ToolCall {
 	for i := range s.accs {
 		idx = append(idx, i)
 	}
-	sort.Slice(idx, func(a, b int) bool { return idx[a] < idx[b] })
+	slices.Sort(idx)
 	calls := make([]ToolCall, 0, len(idx))
 	for _, i := range idx {
 		acc := s.accs[i]

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"database/sql"
 	"errors"
 	"strings"
 
@@ -37,6 +38,16 @@ func New(deps Deps) *fiber.App {
 	api.Patch("/jobs/:id", newUpdateJobHandler(deps))
 	api.Delete("/jobs/:id", newDeleteJobHandler(deps))
 
+	api.Get("/sessions", newListSessionsHandler(deps))
+	api.Get("/sessions/:id/messages", newListMessagesHandler(deps))
+	api.Patch("/sessions/:id", newUpdateSessionHandler(deps))
+	api.Delete("/sessions/:id", newDeleteSessionHandler(deps))
+
+	users := api.Group("/users", requireAdmin(deps.Auth))
+	users.Get("", newListUsersHandler(deps))
+	users.Post("", newCreateUserHandler(deps))
+	users.Delete("/:id", newDeleteUserHandler(deps))
+
 	return app
 }
 
@@ -68,6 +79,24 @@ func requireSession(a auth.Auth) fiber.Handler {
 			return fiber.NewError(fiber.StatusUnauthorized, "unauthorized")
 		}
 		c.Locals(userIDKey{}, userID)
+		return c.Next()
+	}
+}
+
+// requireAdmin runs after requireSession and rejects non-admin callers.
+func requireAdmin(a auth.Auth) fiber.Handler {
+	return func(c fiber.Ctx) error {
+		userID := c.Locals(userIDKey{}).(int64)
+		role, err := a.Role(c.Context(), userID)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return fiber.NewError(fiber.StatusUnauthorized, "unauthorized")
+			}
+			return err
+		}
+		if role != auth.RoleAdmin {
+			return fiber.NewError(fiber.StatusForbidden, "admin access required")
+		}
 		return c.Next()
 	}
 }

@@ -120,7 +120,7 @@ func TestListMessagesReturnsNewest(t *testing.T) {
 	require.NoError(t, err)
 
 	var ids []int64
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		m, err := s.AppendMessage(ctx, db.AppendMessageParams{
 			SessionID: session.ID,
 			Role:      "user",

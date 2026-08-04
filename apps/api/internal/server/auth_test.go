@@ -53,7 +53,7 @@ func TestSignupLocksAfterFirstUser(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	res, err := app.Test(req, fiber.TestConfig{Timeout: 0})
 	require.NoError(t, err)
-	defer func() { _ = res.Body.Close() }()
+	defer res.Body.Close() //nolint:errcheck
 
 	assert.Equal(t, http.StatusForbidden, res.StatusCode)
 	assert.Equal(t, "sign-up is disabled", decodeErrorMessage(t, res))
@@ -77,7 +77,7 @@ func TestSigninAfterSignup(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	res, err := app.Test(req, fiber.TestConfig{Timeout: 0})
 	require.NoError(t, err)
-	defer func() { _ = res.Body.Close() }()
+	defer res.Body.Close() //nolint:errcheck
 	require.Equal(t, http.StatusOK, res.StatusCode)
 
 	var cookie string

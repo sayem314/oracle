@@ -292,7 +292,7 @@ func (e *Engine) runRound(ctx context.Context, sink Sink, req llm.Request) (stri
 	if err != nil {
 		return "", nil, "", err
 	}
-	defer func() { _ = stream.Close() }()
+	defer stream.Close() //nolint:errcheck
 
 	var text strings.Builder
 	var calls []llm.ToolCall

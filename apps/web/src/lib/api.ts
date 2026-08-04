@@ -54,6 +54,14 @@ async function deleteRequest(path: string): Promise<void> {
   }
 }
 
+async function getRequest(path: string): Promise<Response> {
+  const res = await fetch(path, { credentials: "include" });
+  if (!res.ok) {
+    throw new Error(await parseError(res));
+  }
+  return res;
+}
+
 // Returns the signed-in user, or null when there is no valid session.
 export async function getSession(): Promise<User | null> {
   const res = await fetch("/auth/me", { credentials: "include" });
@@ -244,4 +252,68 @@ export async function updateJob(
 
 export async function deleteJob(id: number): Promise<void> {
   await deleteRequest(`/api/v1/jobs/${id}`);
+}
+
+export interface SessionInfo {
+  id: number;
+  title: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SessionToolCall {
+  id: number;
+  call_id: string;
+  name: string;
+  arguments: string;
+  result: string;
+  status: string;
+}
+
+export interface SessionMessage {
+  id: number;
+  role: string;
+  content: string;
+  created_at: string;
+  tool_calls?: SessionToolCall[];
+}
+
+export async function listSessions(): Promise<SessionInfo[]> {
+  const res = await getRequest("/api/v1/sessions");
+  return (await res.json()) as SessionInfo[];
+}
+
+export async function listSessionMessages(id: number): Promise<SessionMessage[]> {
+  const res = await getRequest(`/api/v1/sessions/${id}/messages`);
+  return (await res.json()) as SessionMessage[];
+}
+
+export async function renameSession(id: number, title: string): Promise<SessionInfo> {
+  const res = await patchJSON(`/api/v1/sessions/${id}`, { title });
+  return (await res.json()) as SessionInfo;
+}
+
+export async function deleteSession(id: number): Promise<void> {
+  await deleteRequest(`/api/v1/sessions/${id}`);
+}
+
+export interface AdminUser {
+  id: number;
+  email: string;
+  role: string;
+  created_at: string;
+}
+
+export async function listUsers(): Promise<AdminUser[]> {
+  const res = await getRequest("/api/v1/users");
+  return (await res.json()) as AdminUser[];
+}
+
+export async function createUser(email: string, password: string): Promise<AdminUser> {
+  const res = await postJSON("/api/v1/users", { email, password });
+  return (await res.json()) as AdminUser;
+}
+
+export async function deleteUser(id: number): Promise<void> {
+  await deleteRequest(`/api/v1/users/${id}`);
 }

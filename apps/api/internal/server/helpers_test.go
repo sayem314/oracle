@@ -93,6 +93,32 @@ func signUp(t *testing.T, app *fiber.App, dbConn *sql.DB, email string) (string,
 	return cookie, userID
 }
 
+// signIn authenticates an existing user through /auth/signin/credential and
+// returns the session cookie. Sign-up locks after the first user, so tests
+// that need a second authenticated user create it and sign in instead.
+func signIn(t *testing.T, app *fiber.App, email, password string) string {
+	t.Helper()
+
+	body, err := json.Marshal(map[string]any{"credential": email, "password": password})
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodPost, "/auth/signin/credential", strings.NewReader(string(body)))
+	req.Header.Set("Content-Type", "application/json")
+	res, err := app.Test(req, fiber.TestConfig{Timeout: 0})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = res.Body.Close() })
+	require.Equal(t, http.StatusOK, res.StatusCode)
+
+	var cookie string
+	for _, c := range res.Cookies() {
+		if c.Name == "limen_session" {
+			cookie = c.Name + "=" + c.Value
+		}
+	}
+	require.NotEmpty(t, cookie, "sign-in did not set a session cookie")
+	return cookie
+}
+
 // seedUser inserts an auth_users row with a fixed id, bypassing the sign-up
 // gate, so tests can build data owned by a user other than the signed-in one.
 func seedUser(t *testing.T, dbConn *sql.DB, id int64) {

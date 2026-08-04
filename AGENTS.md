@@ -47,6 +47,7 @@ Go style: `cmd/` per binary, private code under `internal/` grouped by feature. 
 - Tests mirror sources (`foo.go` gets `foo_test.go`) and use black-box packages (`server_test`).
 - testify: `require` for preconditions (errors, nil checks), `assert` for independent value checks. No `testify/suite` (use `t.Run`), no `testify/mock` (hand-written fakes). Enforced by `testifylint`.
 - golangci-lint v2 (`.golangci.yml`) must report zero issues. gofmt is enforced.
+- Deferred cleanup: a `Close()` error at teardown is deliberately ignored. Write a plain `defer x.Close() //nolint:errcheck` — no `defer func() { _ = ... }()` wrappers, and do not add errcheck exclusions to `.golangci.yml`.
 - Code comments: default to none. A one-line `//` comment is allowed when the "why" is genuinely non-obvious (precedence, subtle edge cases, workarounds). Never comment self-evident code, and no block explanations unless asked.
 - Config via koanf. Precedence: defaults, then `.env`, then `ORACLE_*` env vars, then plain `PORT`. Copy `.env.example` to `.env` (git-ignored).
 - Logging via the global `github.com/rs/zerolog/log` package, configured once in `main`. Colored console on a TTY, JSON otherwise. Import and use `log.Info()` directly, no plumbing.
@@ -67,7 +68,7 @@ Go style: `cmd/` per binary, private code under `internal/` grouped by feature. 
 - [x] Step 8: Tool-calling foundation
 - [x] Step 9: Permission ruleset (allow/deny/ask)
 - [x] Step 10a: Scheduler (cron jobs, headless runs)
-- [ ] Step 10b: Multi-user hardening (admin-managed users, session APIs)
+- [x] Step 10b: Multi-user hardening (admin-managed users, session APIs)
 - [ ] Step 10c: Deploy (Docker, adapter-node)
 
 Rationale for these choices lives in `docs/decisions.md`.

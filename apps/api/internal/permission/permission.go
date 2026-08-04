@@ -76,7 +76,7 @@ func ParseVerdict(s string) (Verdict, error) {
 // "get_time:allow, web_*:ask".
 func ParseRules(s string) ([]Rule, error) {
 	var rules []Rule
-	for _, entry := range strings.Split(s, ",") {
+	for entry := range strings.SplitSeq(s, ",") {
 		entry = strings.TrimSpace(entry)
 		if entry == "" {
 			continue
