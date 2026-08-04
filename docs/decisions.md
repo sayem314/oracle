@@ -2,6 +2,13 @@
 
 Lightweight ADRs. Latest first.
 
+## 2026-08-04: FK from sessions to auth_users, migrations reordered
+
+- `sessions.user_id` now references `auth_users(id) ON DELETE CASCADE`, completing a single delete chain: `auth_users -> sessions -> messages` (messages already cascade from sessions, Limen's `auth_sessions` already cascade from auth_users). Deleting a user removes their sessions and messages.
+- Migrations were reordered to declare that FK inline instead of a SQLite table rebuild: auth tables moved to 00001, sessions to 00002, messages to 00003, so `auth_users` exists before `sessions` references it. Safe because the app is pre-launch with no databases anywhere; migrations stay append-only from here on.
+- CASCADE over RESTRICT: a self-hosted assistant should drop a user's data when the user goes, matching Limen's own `auth_sessions` cascade. The app already guarantees a session only ever references the authenticated user, so the FK is defense in depth and readies automatic cleanup for whenever user deletion lands.
+- Store and server tests now seed `auth_users` rows (raw SQL, tests only) for the chat data they build, since the FK is enforced. The `store.Store` interface still does not touch auth tables. Two tests added: a session for a nonexistent user is rejected, and deleting a user cascades to their sessions and messages.
+
 ## 2026-08-03: Limen auth, first-user gate, and session middleware
 
 - Limen (`github.com/thecodearcher/limen`, better-auth style) supplies credential-password auth, sessions, and rate limiting. It is net/http based, so it mounts at `/auth/*` through Fiber's official `middleware/adaptor`, and the `/api/v1` session middleware converts requests back with `adaptor.ConvertRequest` to call `auth.GetSession`. Exactly the shape the Fiber ADR anticipated.

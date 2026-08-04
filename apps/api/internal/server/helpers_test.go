@@ -3,6 +3,7 @@ package server_test
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -65,4 +66,16 @@ func signUp(t *testing.T, app *fiber.App, dbConn *sql.DB, email string) (string,
 	var userID int64
 	require.NoError(t, dbConn.QueryRow("SELECT id FROM auth_users WHERE email = ?", email).Scan(&userID))
 	return cookie, userID
+}
+
+// seedUser inserts an auth_users row with a fixed id, bypassing the sign-up
+// gate, so tests can build data owned by a user other than the signed-in one.
+func seedUser(t *testing.T, dbConn *sql.DB, id int64) {
+	t.Helper()
+
+	_, err := dbConn.Exec(
+		"INSERT INTO auth_users (id, email) VALUES (?, ?)",
+		id, fmt.Sprintf("seeded%d@example.com", id),
+	)
+	require.NoError(t, err)
 }

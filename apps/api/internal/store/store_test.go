@@ -2,6 +2,7 @@ package store_test
 
 import (
 	"database/sql"
+	"fmt"
 	"path/filepath"
 	"testing"
 
@@ -12,7 +13,7 @@ import (
 	"github.com/sayem314/oracle/apps/api/internal/store/db"
 )
 
-func openStore(t *testing.T) store.Store {
+func openStore(t *testing.T) (store.Store, *sql.DB) {
 	t.Helper()
 
 	dsn := "file:" + filepath.Join(t.TempDir(), "test.db") + "?_pragma=foreign_keys(ON)"
@@ -24,12 +25,26 @@ func openStore(t *testing.T) store.Store {
 	require.NoError(t, err)
 	require.Positive(t, applied)
 
-	return store.New(dbConn)
+	return store.New(dbConn), dbConn
+}
+
+// seedUser inserts a minimal auth_users row so chat rows can satisfy the
+// sessions.user_id foreign key.
+func seedUser(t *testing.T, dbConn *sql.DB, id int64) {
+	t.Helper()
+
+	_, err := dbConn.Exec(
+		"INSERT INTO auth_users (id, email) VALUES (?, ?)",
+		id, fmt.Sprintf("user%d@example.com", id),
+	)
+	require.NoError(t, err)
 }
 
 func TestSessionLifecycle(t *testing.T) {
-	s := openStore(t)
+	s, dbConn := openStore(t)
 	ctx := t.Context()
+	seedUser(t, dbConn, 1)
+	seedUser(t, dbConn, 2)
 
 	created, err := s.CreateSession(ctx, db.CreateSessionParams{UserID: 1, Title: "hello"})
 	require.NoError(t, err)
@@ -65,8 +80,9 @@ func TestSessionLifecycle(t *testing.T) {
 }
 
 func TestMessageLifecycle(t *testing.T) {
-	s := openStore(t)
+	s, dbConn := openStore(t)
 	ctx := t.Context()
+	seedUser(t, dbConn, 1)
 
 	session, err := s.CreateSession(ctx, db.CreateSessionParams{UserID: 1, Title: "chat"})
 	require.NoError(t, err)
@@ -99,8 +115,9 @@ func TestMessageLifecycle(t *testing.T) {
 }
 
 func TestDeleteSessionCascadesMessages(t *testing.T) {
-	s := openStore(t)
+	s, dbConn := openStore(t)
 	ctx := t.Context()
+	seedUser(t, dbConn, 1)
 
 	session, err := s.CreateSession(ctx, db.CreateSessionParams{UserID: 1})
 	require.NoError(t, err)
@@ -108,6 +125,34 @@ func TestDeleteSessionCascadesMessages(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NoError(t, s.DeleteSession(ctx, session.ID))
+
+	count, err := s.CountMessages(ctx, session.ID)
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), count)
+}
+
+func TestCreateSessionRequiresExistingUser(t *testing.T) {
+	s, _ := openStore(t)
+
+	_, err := s.CreateSession(t.Context(), db.CreateSessionParams{UserID: 42})
+	require.Error(t, err)
+}
+
+func TestDeleteUserCascadesSessions(t *testing.T) {
+	s, dbConn := openStore(t)
+	ctx := t.Context()
+	seedUser(t, dbConn, 1)
+
+	session, err := s.CreateSession(ctx, db.CreateSessionParams{UserID: 1})
+	require.NoError(t, err)
+	_, err = s.AppendMessage(ctx, db.AppendMessageParams{SessionID: session.ID, Role: "user", Content: "hi"})
+	require.NoError(t, err)
+
+	_, err = dbConn.Exec("DELETE FROM auth_users WHERE id = ?", 1)
+	require.NoError(t, err)
+
+	_, err = s.GetSession(ctx, session.ID)
+	require.ErrorIs(t, err, sql.ErrNoRows)
 
 	count, err := s.CountMessages(ctx, session.ID)
 	require.NoError(t, err)

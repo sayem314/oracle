@@ -34,6 +34,7 @@ func TestChatRejectsInvalidSession(t *testing.T) {
 func TestChatRejectsOtherUsersSession(t *testing.T) {
 	app, s, dbConn := newTestApp(t, llm.NewMock())
 	cookie, _ := signUp(t, app, dbConn, "owner@example.com")
+	seedUser(t, dbConn, 999)
 
 	foreign, err := s.CreateSession(t.Context(), db.CreateSessionParams{UserID: 999})
 	require.NoError(t, err)
