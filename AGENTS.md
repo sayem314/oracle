@@ -62,7 +62,7 @@ Go style: `cmd/` per binary, private code under `internal/` grouped by feature. 
 - [x] Step 4: LLM `Provider` interface + OpenAI-compatible implementation + mock
 - [x] Step 5: SSE `POST /api/v1/chat` wired to Provider
 - [x] Step 6: Limen at `/auth/*` + session middleware on `/api/*`
-- [ ] Step 7: SvelteKit login + streaming chat UI
+- [x] Step 7: SvelteKit login + streaming chat UI
 - [ ] Step 8: Tool-calling foundation
 - [ ] Step 9: Permission ruleset (allow/deny/ask)
 - [ ] Step 10: Scheduler, multi-user hardening, deploy

@@ -2,7 +2,16 @@ import adapter from "@sveltejs/adapter-auto";
 import { sveltekit } from "@sveltejs/kit/vite";
 import { defineConfig } from "vite";
 
+// The Go API the dev server proxies /api and /auth to. Matches ORACLE_PORT's default.
+const apiTarget = "http://localhost:8080";
+
 export default defineConfig({
+  server: {
+    proxy: {
+      "/api": { target: apiTarget, changeOrigin: true },
+      "/auth": { target: apiTarget, changeOrigin: true },
+    },
+  },
   plugins: [
     sveltekit({
       compilerOptions: {
