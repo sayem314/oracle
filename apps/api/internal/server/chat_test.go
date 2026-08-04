@@ -17,6 +17,7 @@ import (
 
 	"github.com/sayem314/oracle/apps/api/internal/llm"
 	"github.com/sayem314/oracle/apps/api/internal/store/db"
+	"github.com/sayem314/oracle/apps/api/internal/tool"
 )
 
 func postChatJSON(t *testing.T, app *fiber.App, cookie, body string) *http.Response {
@@ -140,6 +141,44 @@ func (s *fakeStream) Err() error {
 }
 
 func (s *fakeStream) Close() error { return nil }
+
+// scriptedProvider returns a different set of chunks on each Chat call so tests
+// can drive multi-round tool-calling conversations.
+type scriptedProvider struct {
+	rounds      [][]llm.Chunk
+	gotRequests []llm.Request
+}
+
+func (p *scriptedProvider) Chat(_ context.Context, req llm.Request) (llm.Stream, error) {
+	p.gotRequests = append(p.gotRequests, req)
+	var chunks []llm.Chunk
+	if len(p.gotRequests)-1 < len(p.rounds) {
+		chunks = p.rounds[len(p.gotRequests)-1]
+	}
+	return &fakeStream{chunks: chunks}, nil
+}
+
+func clockRegistry(t *testing.T) *tool.Registry {
+	t.Helper()
+	r := tool.NewRegistry()
+	require.NoError(t, r.Register(tool.Tool{
+		Definition: llm.Tool{Name: "clock", Description: "Return the current time."},
+		Execute:    func(_ context.Context, _ json.RawMessage) (string, error) { return "12:00", nil },
+	}))
+	return r
+}
+
+type toolCallsEvent struct {
+	MessageID int64          `json:"message_id"`
+	Calls     []llm.ToolCall `json:"calls"`
+}
+
+type toolResultEvent struct {
+	MessageID  int64  `json:"message_id"`
+	ToolCallID string `json:"tool_call_id"`
+	Name       string `json:"name"`
+	Result     string `json:"result"`
+}
 
 type startEvent struct {
 	SessionID     int64 `json:"session_id"`
@@ -357,4 +396,132 @@ func TestChatMidStreamError(t *testing.T) {
 	count, err := s.CountMessages(t.Context(), start.SessionID)
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), count)
+}
+
+func TestChatToolLoop(t *testing.T) {
+	provider := &scriptedProvider{rounds: [][]llm.Chunk{
+		{{FinishReason: "tool_calls", ToolCalls: []llm.ToolCall{{ID: "call_1", Name: "clock", Arguments: "{}"}}}},
+		{{Delta: "It is "}, {Delta: "12:00"}, {FinishReason: "stop"}},
+	}}
+	app, s, dbConn := newTestAppWithTools(t, provider, clockRegistry(t))
+	cookie, _ := signUp(t, app, dbConn, "owner@example.com")
+
+	res := postChat(t, app, cookie, map[string]any{"message": "what time is it?"})
+	require.Equal(t, http.StatusOK, res.StatusCode)
+
+	frames := parseSSE(t, res.Body)
+
+	starts := framesByName(frames, "start")
+	require.Len(t, starts, 1)
+	var start startEvent
+	decodeFrame(t, starts[0], &start)
+
+	toolCalls := framesByName(frames, "tool_calls")
+	require.Len(t, toolCalls, 1)
+	var tc toolCallsEvent
+	decodeFrame(t, toolCalls[0], &tc)
+	assert.Positive(t, tc.MessageID)
+	require.Len(t, tc.Calls, 1)
+	assert.Equal(t, "clock", tc.Calls[0].Name)
+
+	toolResults := framesByName(frames, "tool_result")
+	require.Len(t, toolResults, 1)
+	var tr toolResultEvent
+	decodeFrame(t, toolResults[0], &tr)
+	assert.Equal(t, "call_1", tr.ToolCallID)
+	assert.Equal(t, "clock", tr.Name)
+	assert.Equal(t, "12:00", tr.Result)
+
+	var text strings.Builder
+	for _, f := range framesByName(frames, "delta") {
+		var delta deltaEvent
+		decodeFrame(t, f, &delta)
+		text.WriteString(delta.Content)
+	}
+	assert.Equal(t, "It is 12:00", text.String())
+
+	dones := framesByName(frames, "done")
+	require.Len(t, dones, 1)
+	var done doneEvent
+	decodeFrame(t, dones[0], &done)
+	assert.Equal(t, "stop", done.FinishReason)
+	assert.Positive(t, done.MessageID)
+	assert.Empty(t, framesByName(frames, "error"))
+
+	// Tool definitions reach the provider, and the follow-up round carries the
+	// assistant tool-call turn plus the tool result.
+	require.Len(t, provider.gotRequests, 2)
+	require.Len(t, provider.gotRequests[0].Tools, 1)
+	assert.Equal(t, "clock", provider.gotRequests[0].Tools[0].Name)
+	last := provider.gotRequests[1].Messages[len(provider.gotRequests[1].Messages)-1]
+	assert.Equal(t, llm.RoleTool, last.Role)
+	assert.Equal(t, "12:00", last.Content)
+	assert.Equal(t, "call_1", last.ToolCallID)
+
+	// Persisted history: user, assistant(tool_calls), tool_calls row, assistant(final).
+	msgs, err := s.ListMessages(t.Context(), db.ListMessagesParams{SessionID: start.SessionID, Limit: 10})
+	require.NoError(t, err)
+	require.Len(t, msgs, 3)
+	assert.Equal(t, "user", msgs[0].Role)
+	assert.Equal(t, "assistant", msgs[1].Role)
+	assert.Equal(t, "assistant", msgs[2].Role)
+	assert.Equal(t, "It is 12:00", msgs[2].Content)
+
+	calls, err := s.ListToolCallsBySession(t.Context(), start.SessionID)
+	require.NoError(t, err)
+	require.Len(t, calls, 1)
+	assert.Equal(t, msgs[1].ID, calls[0].MessageID)
+	assert.Equal(t, "call_1", calls[0].CallID)
+	assert.Equal(t, "clock", calls[0].Name)
+	assert.Equal(t, `{}`, calls[0].Arguments)
+	assert.Equal(t, "12:00", calls[0].Result)
+	assert.Equal(t, "done", calls[0].Status)
+}
+
+func TestChatToolRoundLimit(t *testing.T) {
+	provider := &fakeProvider{chunks: []llm.Chunk{
+		{FinishReason: "tool_calls", ToolCalls: []llm.ToolCall{{ID: "call_1", Name: "clock", Arguments: "{}"}}},
+	}}
+	app, _, dbConn := newTestAppWithTools(t, provider, clockRegistry(t))
+	cookie, _ := signUp(t, app, dbConn, "owner@example.com")
+
+	res := postChat(t, app, cookie, map[string]any{"message": "hi"})
+	require.Equal(t, http.StatusOK, res.StatusCode)
+
+	frames := parseSSE(t, res.Body)
+
+	errs := framesByName(frames, "error")
+	require.Len(t, errs, 1)
+	var chatErr errorEvent
+	decodeFrame(t, errs[0], &chatErr)
+	assert.Contains(t, chatErr.Message, "round limit")
+	assert.Empty(t, framesByName(frames, "done"))
+	assert.Len(t, framesByName(frames, "tool_calls"), 5)
+}
+
+func TestChatUnknownToolFeedsErrorBack(t *testing.T) {
+	provider := &scriptedProvider{rounds: [][]llm.Chunk{
+		{{FinishReason: "tool_calls", ToolCalls: []llm.ToolCall{{ID: "call_1", Name: "nope", Arguments: "{}"}}}},
+		{{Delta: "sorry"}, {FinishReason: "stop"}},
+	}}
+	app, _, dbConn := newTestAppWithTools(t, provider, tool.NewRegistry())
+	cookie, _ := signUp(t, app, dbConn, "owner@example.com")
+
+	res := postChat(t, app, cookie, map[string]any{"message": "hi"})
+	require.Equal(t, http.StatusOK, res.StatusCode)
+
+	frames := parseSSE(t, res.Body)
+
+	toolResults := framesByName(frames, "tool_result")
+	require.Len(t, toolResults, 1)
+	var tr toolResultEvent
+	decodeFrame(t, toolResults[0], &tr)
+	assert.Contains(t, tr.Result, `unknown tool "nope"`)
+
+	// The model saw the error as the tool result and still finished cleanly.
+	require.Len(t, provider.gotRequests, 2)
+	last := provider.gotRequests[1].Messages[len(provider.gotRequests[1].Messages)-1]
+	assert.Contains(t, last.Content, `unknown tool "nope"`)
+	require.Len(t, framesByName(frames, "done"), 1)
+	assert.Empty(t, framesByName(frames, "error"))
 }

@@ -22,6 +22,10 @@ type Store interface {
 	ListMessages(ctx context.Context, arg db.ListMessagesParams) ([]db.Message, error)
 	CountMessages(ctx context.Context, sessionID int64) (int64, error)
 	DeleteMessagesBySession(ctx context.Context, sessionID int64) error
+
+	InsertToolCall(ctx context.Context, arg db.InsertToolCallParams) (db.ToolCall, error)
+	UpdateToolCallResult(ctx context.Context, arg db.UpdateToolCallResultParams) error
+	ListToolCallsBySession(ctx context.Context, sessionID int64) ([]db.ToolCall, error)
 }
 
 var _ Store = (*db.Queries)(nil)

@@ -17,11 +17,26 @@ import (
 	"github.com/sayem314/oracle/apps/api/internal/llm"
 	"github.com/sayem314/oracle/apps/api/internal/server"
 	"github.com/sayem314/oracle/apps/api/internal/store"
+	"github.com/sayem314/oracle/apps/api/internal/tool"
 )
 
 const testAuthSecret = "0123456789abcdef0123456789abcdef"
 
 func newTestApp(t *testing.T, provider llm.Provider) (*fiber.App, store.Store, *sql.DB) {
+	t.Helper()
+	return newTestAppWithTools(t, provider, builtinTools(t))
+}
+
+func builtinTools(t *testing.T) *tool.Registry {
+	t.Helper()
+	r := tool.NewRegistry()
+	for _, tl := range tool.NewBuiltin() {
+		require.NoError(t, r.Register(tl))
+	}
+	return r
+}
+
+func newTestAppWithTools(t *testing.T, provider llm.Provider, tools tool.Executor) (*fiber.App, store.Store, *sql.DB) {
 	t.Helper()
 
 	dsn := "file:" + filepath.Join(t.TempDir(), "test.db") + "?_pragma=foreign_keys(ON)"
@@ -36,7 +51,7 @@ func newTestApp(t *testing.T, provider llm.Provider) (*fiber.App, store.Store, *
 	require.NoError(t, err)
 
 	s := store.New(dbConn)
-	app := server.New(server.Deps{Store: s, LLM: provider, Auth: a})
+	app := server.New(server.Deps{Store: s, LLM: provider, Auth: a, Tools: tools})
 	return app, s, dbConn
 }
 

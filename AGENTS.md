@@ -34,6 +34,7 @@ apps/api/            Go API (module github.com/sayem314/oracle/apps/api)
   internal/llm/      LLM Provider interface, OpenAI-compatible implementation, mock
   internal/server/   HTTP app, routes, handlers (one file per domain)
   internal/store/    Store interface over sqlc-generated db package
+  internal/tool/     Tool Executor interface, Registry, built-in tools
   migrations/        goose SQL migrations, embedded and applied at startup
 apps/web/            SvelteKit frontend (bun workspace)
 docs/                decision log
@@ -63,7 +64,7 @@ Go style: `cmd/` per binary, private code under `internal/` grouped by feature. 
 - [x] Step 5: SSE `POST /api/v1/chat` wired to Provider
 - [x] Step 6: Limen at `/auth/*` + session middleware on `/api/*`
 - [x] Step 7: SvelteKit login + streaming chat UI
-- [ ] Step 8: Tool-calling foundation
+- [x] Step 8: Tool-calling foundation
 - [ ] Step 9: Permission ruleset (allow/deny/ask)
 - [ ] Step 10: Scheduler, multi-user hardening, deploy
 

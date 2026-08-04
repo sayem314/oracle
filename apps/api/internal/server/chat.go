@@ -1,8 +1,10 @@
 package server
 
 import (
+	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/gofiber/fiber/v3"
@@ -13,6 +15,10 @@ import (
 )
 
 const chatHistoryLimit = 1000
+
+// chatToolRoundLimit caps model->tool->model iterations in a single request so
+// a misbehaving model cannot loop forever.
+const chatToolRoundLimit = 5
 
 type chatLocalsKey struct{}
 
@@ -44,6 +50,17 @@ type chatDoneEvent struct {
 
 type chatErrorEvent struct {
 	Message string `json:"message"`
+}
+
+type chatToolCallsEvent struct {
+	MessageID int64          `json:"message_id"`
+	Calls     []llm.ToolCall `json:"calls"`
+}
+
+type chatToolResultEvent struct {
+	ToolCallID string `json:"tool_call_id"`
+	Name       string `json:"name"`
+	Result     string `json:"result"`
 }
 
 func newChatHandler(deps Deps) fiber.Handler {
@@ -114,9 +131,29 @@ func prepareChat(deps Deps, c fiber.Ctx) (chatContext, error) {
 		return chatContext{}, err
 	}
 
+	toolCalls, err := deps.Store.ListToolCallsBySession(ctx, sessionID)
+	if err != nil {
+		return chatContext{}, err
+	}
+	callsByMessage := make(map[int64][]db.ToolCall)
+	for _, tc := range toolCalls {
+		callsByMessage[tc.MessageID] = append(callsByMessage[tc.MessageID], tc)
+	}
+
 	llmReq := llm.Request{Model: req.Model}
 	for _, m := range messages {
-		llmReq.Messages = append(llmReq.Messages, llm.Message{Role: llm.Role(m.Role), Content: m.Content})
+		msg := llm.Message{Role: llm.Role(m.Role), Content: m.Content}
+		if m.Role == string(llm.RoleAssistant) {
+			for _, tc := range callsByMessage[m.ID] {
+				msg.ToolCalls = append(msg.ToolCalls, llm.ToolCall{ID: tc.CallID, Name: tc.Name, Arguments: tc.Arguments})
+			}
+			llmReq.Messages = append(llmReq.Messages, msg)
+			for _, tc := range callsByMessage[m.ID] {
+				llmReq.Messages = append(llmReq.Messages, llm.Message{Role: llm.RoleTool, Content: tc.Result, ToolCallID: tc.CallID})
+			}
+			continue
+		}
+		llmReq.Messages = append(llmReq.Messages, msg)
 	}
 
 	return chatContext{sessionID: sessionID, userMessageID: userMsg.ID, request: llmReq}, nil
@@ -132,47 +169,127 @@ func streamChat(deps Deps, c fiber.Ctx, s *sse.Stream) error {
 		return err
 	}
 
-	stream, err := deps.LLM.Chat(s.Context(), chat.request)
+	ctx := s.Context()
+	messages := chat.request.Messages
+	tools := deps.Tools.Definitions()
+
+	for round := 0; round < chatToolRoundLimit; round++ {
+		req := chat.request
+		req.Messages = messages
+		req.Tools = tools
+
+		text, calls, finishReason, err := runChatRound(deps, s, ctx, req)
+		if err != nil {
+			return sendChatError(s, err)
+		}
+
+		if len(calls) == 0 {
+			assistant, err := deps.Store.AppendMessage(ctx, db.AppendMessageParams{
+				SessionID: chat.sessionID,
+				Role:      string(llm.RoleAssistant),
+				Content:   text,
+			})
+			if err != nil {
+				return sendChatError(s, err)
+			}
+			if err := deps.Store.TouchSession(ctx, chat.sessionID); err != nil {
+				return sendChatError(s, err)
+			}
+			return s.Event(sse.Event{Name: "done", Data: chatDoneEvent{
+				MessageID:    assistant.ID,
+				FinishReason: finishReason,
+			}})
+		}
+
+		assistant, err := deps.Store.AppendMessage(ctx, db.AppendMessageParams{
+			SessionID: chat.sessionID,
+			Role:      string(llm.RoleAssistant),
+			Content:   text,
+		})
+		if err != nil {
+			return sendChatError(s, err)
+		}
+
+		callRows := make([]db.ToolCall, 0, len(calls))
+		for _, call := range calls {
+			row, err := deps.Store.InsertToolCall(ctx, db.InsertToolCallParams{
+				MessageID: assistant.ID,
+				CallID:    call.ID,
+				Name:      call.Name,
+				Arguments: call.Arguments,
+				Status:    "pending",
+			})
+			if err != nil {
+				return sendChatError(s, err)
+			}
+			callRows = append(callRows, row)
+		}
+
+		if err := s.Event(sse.Event{Name: "tool_calls", Data: chatToolCallsEvent{
+			MessageID: assistant.ID,
+			Calls:     calls,
+		}}); err != nil {
+			return err
+		}
+
+		messages = append(messages, llm.Message{Role: llm.RoleAssistant, Content: text, ToolCalls: calls})
+		for i, call := range calls {
+			result, execErr := deps.Tools.Execute(ctx, call.Name, call.Arguments)
+			status := "done"
+			if execErr != nil {
+				result = "tool error: " + execErr.Error()
+				status = "error"
+			}
+			if err := deps.Store.UpdateToolCallResult(ctx, db.UpdateToolCallResultParams{
+				ID:     callRows[i].ID,
+				Result: result,
+				Status: status,
+			}); err != nil {
+				return sendChatError(s, err)
+			}
+			if err := s.Event(sse.Event{Name: "tool_result", Data: chatToolResultEvent{
+				ToolCallID: call.ID,
+				Name:       call.Name,
+				Result:     result,
+			}}); err != nil {
+				return err
+			}
+			messages = append(messages, llm.Message{Role: llm.RoleTool, Content: result, ToolCallID: call.ID})
+		}
+	}
+
+	return sendChatError(s, fmt.Errorf("tool call round limit (%d) reached", chatToolRoundLimit))
+}
+
+// runChatRound streams one model turn, relaying deltas to the client, and
+// returns the accumulated text, any requested tool calls, and the finish reason.
+func runChatRound(deps Deps, s *sse.Stream, ctx context.Context, req llm.Request) (string, []llm.ToolCall, string, error) {
+	stream, err := deps.LLM.Chat(ctx, req)
 	if err != nil {
-		return sendChatError(s, err)
+		return "", nil, "", err
 	}
 	defer func() { _ = stream.Close() }()
 
 	var text strings.Builder
+	var calls []llm.ToolCall
 	var finishReason string
 	for stream.Next() {
 		chunk := stream.Current()
 		if chunk.Delta != "" {
 			text.WriteString(chunk.Delta)
 			if err := s.Event(sse.Event{Name: "delta", Data: chatDeltaEvent{Content: chunk.Delta}}); err != nil {
-				return err
+				return "", nil, "", err
 			}
 		}
 		if chunk.FinishReason != "" {
 			finishReason = chunk.FinishReason
 		}
+		calls = append(calls, chunk.ToolCalls...)
 	}
 	if err := stream.Err(); err != nil {
-		return sendChatError(s, err)
+		return "", nil, "", err
 	}
-
-	ctx := s.Context()
-	assistant, err := deps.Store.AppendMessage(ctx, db.AppendMessageParams{
-		SessionID: chat.sessionID,
-		Role:      string(llm.RoleAssistant),
-		Content:   text.String(),
-	})
-	if err != nil {
-		return sendChatError(s, err)
-	}
-	if err := deps.Store.TouchSession(ctx, chat.sessionID); err != nil {
-		return sendChatError(s, err)
-	}
-
-	return s.Event(sse.Event{Name: "done", Data: chatDoneEvent{
-		MessageID:    assistant.ID,
-		FinishReason: finishReason,
-	}})
+	return text.String(), calls, finishReason, nil
 }
 
 func sendChatError(s *sse.Stream, err error) error {

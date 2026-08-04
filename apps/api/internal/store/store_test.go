@@ -187,6 +187,63 @@ func TestDeleteUserCascadesSessions(t *testing.T) {
 	assert.Equal(t, int64(0), count)
 }
 
+func TestToolCallLifecycle(t *testing.T) {
+	s, dbConn := openStore(t)
+	ctx := t.Context()
+	seedUser(t, dbConn, 1)
+
+	session, err := s.CreateSession(ctx, db.CreateSessionParams{UserID: 1})
+	require.NoError(t, err)
+	asst := db.AppendMessageParams{SessionID: session.ID, Role: "assistant", Content: ""}
+	msg, err := s.AppendMessage(ctx, asst)
+	require.NoError(t, err)
+
+	created, err := s.InsertToolCall(ctx, db.InsertToolCallParams{
+		MessageID: msg.ID,
+		CallID:    "call_1",
+		Name:      "clock",
+		Arguments: `{}`,
+		Status:    "pending",
+	})
+	require.NoError(t, err)
+	assert.Positive(t, created.ID)
+	assert.Equal(t, "pending", created.Status)
+	assert.Empty(t, created.Result)
+
+	require.NoError(t, s.UpdateToolCallResult(ctx, db.UpdateToolCallResultParams{
+		ID:     created.ID,
+		Result: "12:00",
+		Status: "done",
+	}))
+
+	calls, err := s.ListToolCallsBySession(ctx, session.ID)
+	require.NoError(t, err)
+	require.Len(t, calls, 1)
+	assert.Equal(t, "12:00", calls[0].Result)
+	assert.Equal(t, "done", calls[0].Status)
+}
+
+func TestToolCallsCascadeWithMessage(t *testing.T) {
+	s, dbConn := openStore(t)
+	ctx := t.Context()
+	seedUser(t, dbConn, 1)
+
+	session, err := s.CreateSession(ctx, db.CreateSessionParams{UserID: 1})
+	require.NoError(t, err)
+	msg, err := s.AppendMessage(ctx, db.AppendMessageParams{SessionID: session.ID, Role: "assistant"})
+	require.NoError(t, err)
+	_, err = s.InsertToolCall(ctx, db.InsertToolCallParams{
+		MessageID: msg.ID, CallID: "call_1", Name: "clock", Status: "pending",
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, s.DeleteMessagesBySession(ctx, session.ID))
+
+	calls, err := s.ListToolCallsBySession(ctx, session.ID)
+	require.NoError(t, err)
+	assert.Empty(t, calls)
+}
+
 func TestMigrateIsIdempotent(t *testing.T) {
 	dsn := "file:" + filepath.Join(t.TempDir(), "test.db")
 	dbConn, err := store.Open(dsn)
@@ -195,7 +252,7 @@ func TestMigrateIsIdempotent(t *testing.T) {
 
 	applied, err := store.Migrate(dbConn)
 	require.NoError(t, err)
-	assert.Equal(t, 3, applied)
+	assert.Equal(t, 4, applied)
 
 	applied, err = store.Migrate(dbConn)
 	require.NoError(t, err)

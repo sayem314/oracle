@@ -10,12 +10,14 @@ import (
 	"github.com/sayem314/oracle/apps/api/internal/auth"
 	"github.com/sayem314/oracle/apps/api/internal/llm"
 	"github.com/sayem314/oracle/apps/api/internal/store"
+	"github.com/sayem314/oracle/apps/api/internal/tool"
 )
 
 type Deps struct {
 	Store store.Store
 	LLM   llm.Provider
 	Auth  auth.Auth
+	Tools tool.Executor
 }
 
 type userIDKey struct{}

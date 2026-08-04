@@ -55,3 +55,14 @@ type Session struct {
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }
+
+type ToolCall struct {
+	ID        int64
+	MessageID int64
+	CallID    string
+	Name      string
+	Arguments string
+	Result    string
+	Status    string
+	CreatedAt time.Time
+}

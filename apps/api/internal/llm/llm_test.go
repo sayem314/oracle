@@ -150,7 +150,155 @@ func TestOpenAIUnsupportedRole(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = p.Chat(context.Background(), llm.Request{
-		Messages: []llm.Message{{Role: llm.Role("tool"), Content: "x"}},
+		Messages: []llm.Message{{Role: llm.Role("function"), Content: "x"}},
 	})
-	require.ErrorContains(t, err, `unsupported role "tool"`)
+	require.ErrorContains(t, err, `unsupported role "function"`)
+}
+
+func TestOpenAIToolMessageRequiresID(t *testing.T) {
+	p, err := llm.New(llm.Options{Provider: llm.ProviderOpenAI, APIKey: "test-key"})
+	require.NoError(t, err)
+
+	_, err = p.Chat(context.Background(), llm.Request{
+		Messages: []llm.Message{{Role: llm.RoleTool, Content: "result"}},
+	})
+	require.ErrorContains(t, err, "missing tool_call_id")
+}
+
+func TestMockToolCalls(t *testing.T) {
+	calls := []llm.ToolCall{{ID: "call_1", Name: "get_time", Arguments: "{}"}}
+	p := &llm.Mock{ToolCalls: calls}
+
+	stream, err := p.Chat(context.Background(), llm.Request{})
+	require.NoError(t, err)
+
+	chunks, text := collect(t, stream)
+	assert.Empty(t, text)
+	require.Len(t, chunks, 1)
+	assert.Equal(t, "tool_calls", chunks[0].FinishReason)
+	assert.Equal(t, calls, chunks[0].ToolCalls)
+}
+
+func TestOpenAISendsTools(t *testing.T) {
+	var gotBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"))
+	}))
+	defer server.Close()
+
+	p, err := llm.New(llm.Options{Provider: llm.ProviderOpenAI, BaseURL: server.URL, APIKey: "test-key"})
+	require.NoError(t, err)
+
+	stream, err := p.Chat(context.Background(), llm.Request{
+		Model: "gpt-test",
+		Tools: []llm.Tool{
+			{
+				Name:        "get_time",
+				Description: "Return the current time.",
+				Parameters:  json.RawMessage(`{"type":"object","properties":{}}`),
+			},
+		},
+	})
+	require.NoError(t, err)
+	collect(t, stream)
+
+	tools, ok := gotBody["tools"].([]any)
+	require.True(t, ok, "expected tools in request body")
+	require.Len(t, tools, 1)
+	first := tools[0].(map[string]any)
+	assert.Equal(t, "function", first["type"])
+	fn := first["function"].(map[string]any)
+	assert.Equal(t, "get_time", fn["name"])
+	assert.Equal(t, "Return the current time.", fn["description"])
+	assert.NotNil(t, fn["parameters"])
+}
+
+func TestOpenAIToolCallStream(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		lines := []string{
+			`data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_a","type":"function","function":{"name":"get_time","arguments":""}}]}}]}`,
+			`data: {"choices":[{"delta":{"tool_calls":[{"index":1,"id":"call_b","type":"function","function":{"name":"echo","arguments":""}}]}}]}`,
+			`data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"a\":"}}]}}]}`,
+			`data: {"choices":[{"delta":{"tool_calls":[{"index":1,"function":{"arguments":"{\"b\":"}}]}}]}`,
+			`data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"1}"}}]}}]}`,
+			`data: {"choices":[{"delta":{"tool_calls":[{"index":1,"function":{"arguments":"2}"}}]}}]}`,
+			`data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}`,
+			`data: [DONE]`,
+		}
+		for _, line := range lines {
+			_, _ = w.Write([]byte(line + "\n\n"))
+		}
+	}))
+	defer server.Close()
+
+	p, err := llm.New(llm.Options{Provider: llm.ProviderOpenAI, BaseURL: server.URL, APIKey: "test-key"})
+	require.NoError(t, err)
+
+	stream, err := p.Chat(context.Background(), llm.Request{Model: "gpt-test"})
+	require.NoError(t, err)
+
+	chunks, text := collect(t, stream)
+	assert.Empty(t, text)
+	require.Len(t, chunks, 1)
+	assert.Equal(t, "tool_calls", chunks[0].FinishReason)
+	require.Len(t, chunks[0].ToolCalls, 2)
+	assert.Equal(t, llm.ToolCall{ID: "call_a", Name: "get_time", Arguments: `{"a":1}`}, chunks[0].ToolCalls[0])
+	assert.Equal(t, llm.ToolCall{ID: "call_b", Name: "echo", Arguments: `{"b":2}`}, chunks[0].ToolCalls[1])
+}
+
+func TestOpenAIInvalidToolSchema(t *testing.T) {
+	p, err := llm.New(llm.Options{Provider: llm.ProviderOpenAI, APIKey: "test-key"})
+	require.NoError(t, err)
+
+	_, err = p.Chat(context.Background(), llm.Request{
+		Tools: []llm.Tool{{Name: "bad", Parameters: json.RawMessage(`{not json`)}},
+	})
+	require.ErrorContains(t, err, "invalid parameters schema")
+}
+
+func TestOpenAIToolHistoryRoundTrip(t *testing.T) {
+	var gotBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"))
+	}))
+	defer server.Close()
+
+	p, err := llm.New(llm.Options{Provider: llm.ProviderOpenAI, BaseURL: server.URL, APIKey: "test-key"})
+	require.NoError(t, err)
+
+	stream, err := p.Chat(context.Background(), llm.Request{
+		Model: "gpt-test",
+		Messages: []llm.Message{
+			{Role: llm.RoleUser, Content: "what time is it?"},
+			{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{{ID: "call_1", Name: "get_time", Arguments: "{}"}}},
+			{Role: llm.RoleTool, Content: "2026-08-04T00:00:00Z", ToolCallID: "call_1"},
+		},
+	})
+	require.NoError(t, err)
+	collect(t, stream)
+
+	messages, ok := gotBody["messages"].([]any)
+	require.True(t, ok)
+	require.Len(t, messages, 3)
+
+	asst := messages[1].(map[string]any)
+	assert.Equal(t, "assistant", asst["role"])
+	asstCalls, ok := asst["tool_calls"].([]any)
+	require.True(t, ok)
+	require.Len(t, asstCalls, 1)
+	call := asstCalls[0].(map[string]any)
+	assert.Equal(t, "call_1", call["id"])
+	fn := call["function"].(map[string]any)
+	assert.Equal(t, "get_time", fn["name"])
+	assert.Equal(t, "{}", fn["arguments"])
+
+	toolMsg := messages[2].(map[string]any)
+	assert.Equal(t, "tool", toolMsg["role"])
+	assert.Equal(t, "call_1", toolMsg["tool_call_id"])
+	assert.Equal(t, "2026-08-04T00:00:00Z", toolMsg["content"])
 }

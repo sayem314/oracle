@@ -9,11 +9,17 @@ const defaultMockReply = "This is a mock response from oracle."
 
 type Mock struct {
 	Reply string
+	// ToolCalls, when set, are returned on every Chat call as the model's turn,
+	// letting tests drive the tool-calling path deterministically.
+	ToolCalls []ToolCall
 }
 
 func NewMock() *Mock { return &Mock{} }
 
 func (m *Mock) Chat(_ context.Context, _ Request) (Stream, error) {
+	if len(m.ToolCalls) > 0 {
+		return &mockStream{chunks: []Chunk{{FinishReason: "tool_calls", ToolCalls: m.ToolCalls}}}, nil
+	}
 	reply := m.Reply
 	if reply == "" {
 		reply = defaultMockReply
