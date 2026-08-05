@@ -34,6 +34,19 @@ async function postJSON(path: string, payload: unknown): Promise<Response> {
   return res;
 }
 
+async function putJSON(path: string, payload: unknown): Promise<Response> {
+  const res = await fetch(path, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+    credentials: "include",
+  });
+  if (!res.ok) {
+    throw new Error(await parseError(res));
+  }
+  return res;
+}
+
 async function patchJSON(path: string, payload: unknown): Promise<Response> {
   const res = await fetch(path, {
     method: "PATCH",
@@ -295,6 +308,30 @@ export async function renameSession(id: number, title: string): Promise<SessionI
 
 export async function deleteSession(id: number): Promise<void> {
   await deleteRequest(`/api/v1/sessions/${id}`);
+}
+
+export interface LLMSettings {
+  provider: string;
+  base_url: string;
+  model: string;
+  has_api_key: boolean;
+}
+
+export interface LLMSaveInput {
+  provider: string;
+  base_url: string;
+  api_key: string;
+  model: string;
+}
+
+export async function getSettings(): Promise<LLMSettings> {
+  const res = await getRequest("/api/v1/settings");
+  return (await res.json()) as LLMSettings;
+}
+
+export async function saveSettings(input: LLMSaveInput): Promise<LLMSettings> {
+  const res = await putJSON("/api/v1/settings", input);
+  return (await res.json()) as LLMSettings;
 }
 
 export interface AdminUser {

@@ -81,11 +81,16 @@ type DiscardSink struct{}
 
 func (DiscardSink) Send(string, any) error { return nil }
 
+// Resolver picks the LLM provider for a run.
+type Resolver interface {
+	Resolve(ctx context.Context, userID int64) (llm.Provider, error)
+}
+
 // Engine drives the model->tool->model loop shared by the chat and approval
 // handlers and the scheduler.
 type Engine struct {
 	Store       store.Store
-	LLM         llm.Provider
+	LLM         Resolver
 	Tools       tool.Executor
 	Permissions *permission.Ruleset
 	Headless    bool
@@ -101,15 +106,20 @@ func (e *Engine) AsHeadless() *Engine {
 
 // Run drives rounds until the model produces a final answer, tool approval
 // pauses the run, or the round limit trips. req.Messages holds the
-// conversation so far and is extended each round.
-func (e *Engine) Run(ctx context.Context, sink Sink, sessionID int64, req llm.Request) error {
+// conversation so far and is extended each round. The provider is resolved
+// once for userID and reused across rounds.
+func (e *Engine) Run(ctx context.Context, sink Sink, sessionID, userID int64, req llm.Request) error {
+	provider, err := e.LLM.Resolve(ctx, userID)
+	if err != nil {
+		return err
+	}
 	tools := e.Tools.Definitions()
 
 	for range ToolRoundLimit {
 		roundReq := req
 		roundReq.Tools = tools
 
-		text, calls, finishReason, err := e.runRound(ctx, sink, roundReq)
+		text, calls, finishReason, err := e.runRound(ctx, sink, provider, roundReq)
 		if err != nil {
 			return err
 		}
@@ -287,8 +297,8 @@ func (e *Engine) BuildHistory(ctx context.Context, sessionID int64) ([]llm.Messa
 
 // runRound streams one model turn, relaying deltas to the sink, and returns
 // the accumulated text, any requested tool calls, and the finish reason.
-func (e *Engine) runRound(ctx context.Context, sink Sink, req llm.Request) (string, []llm.ToolCall, string, error) {
-	stream, err := e.LLM.Chat(ctx, req)
+func (e *Engine) runRound(ctx context.Context, sink Sink, provider llm.Provider, req llm.Request) (string, []llm.ToolCall, string, error) {
+	stream, err := provider.Chat(ctx, req)
 	if err != nil {
 		return "", nil, "", err
 	}

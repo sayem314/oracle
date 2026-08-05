@@ -74,5 +74,6 @@ Go style: `cmd/` per binary, private code under `internal/` grouped by feature. 
 - [x] Step 10a: Scheduler (cron jobs, headless runs)
 - [x] Step 10b: Multi-user hardening (admin-managed users, session APIs)
 - [x] Step 10c: Deploy (Docker, adapter-node)
+- [x] Step 11: Per-user LLM settings (provider/key/model in DB, per-request model override)
 
 Rationale for these choices lives in `docs/decisions.md`.

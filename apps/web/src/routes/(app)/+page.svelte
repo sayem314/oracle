@@ -28,6 +28,7 @@
   let activeSessionId = $state<number | null>(null);
 
   let input = $state("");
+  let modelOverride = $state("");
   let streaming = $state(false);
   let streamingContent = $state("");
   let error = $state("");
@@ -234,7 +235,8 @@
 
     input = "";
     blocks = [...blocks, { kind: "user", content: message }];
-    await run((cb) => streamChat({ sessionId: activeSessionId, message, signal: aborter?.signal }, cb));
+    const model = modelOverride.trim() || undefined;
+    await run((cb) => streamChat({ sessionId: activeSessionId, message, model, signal: aborter?.signal }, cb));
   }
 
   async function decide(rowId: number, decision: "approve" | "deny") {
@@ -372,14 +374,23 @@
           void send();
         }}
       >
-        <textarea
-          bind:this={field}
-          bind:value={input}
-          onkeydown={onKeydown}
-          rows="1"
-          placeholder={awaitingApproval ? "Approve or deny the pending tool call" : "Message oracle"}
-          disabled={streaming || awaitingApproval}></textarea>
-        <button type="submit" class="send" disabled={streaming || awaitingApproval || !input.trim()}>Send</button>
+        <div class="composer-row">
+          <textarea
+            bind:this={field}
+            bind:value={input}
+            onkeydown={onKeydown}
+            rows="1"
+            placeholder={awaitingApproval ? "Approve or deny the pending tool call" : "Message oracle"}
+            disabled={streaming || awaitingApproval}></textarea>
+          <button type="submit" class="send" disabled={streaming || awaitingApproval || !input.trim()}>Send</button>
+        </div>
+        <input
+          class="model-override"
+          type="text"
+          bind:value={modelOverride}
+          placeholder="Model override (leave blank for your default)"
+          disabled={streaming || awaitingApproval}
+        />
       </form>
     </div>
   </div>
@@ -640,10 +651,30 @@
 
   .composer {
     display: flex;
-    gap: 10px;
-    align-items: flex-end;
+    flex-direction: column;
+    gap: 8px;
     max-width: 760px;
     margin: 0 auto;
+  }
+
+  .composer-row {
+    display: flex;
+    gap: 10px;
+    align-items: flex-end;
+  }
+
+  .model-override {
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 6px 12px;
+    font-size: 12px;
+    color: var(--text-dim);
+    outline: none;
+  }
+
+  .model-override:focus {
+    border-color: var(--accent);
   }
 
   textarea {

@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"testing"
 	"time"
@@ -123,7 +125,7 @@ func TestRunOnceExecutesDueJob(t *testing.T) {
 	}}
 	engine := &chat.Engine{
 		Store:       s,
-		LLM:         provider,
+		LLM:         &chat.LLMResolver{Store: s, Default: provider},
 		Tools:       tool.NewRegistry(),
 		Permissions: permission.NewRuleset(permission.Allow, nil),
 		Headless:    true,
@@ -159,6 +161,53 @@ func TestRunOnceExecutesDueJob(t *testing.T) {
 	assert.Len(t, msgs, 2)
 }
 
+// TestRunOnceUsesOwnerSettings verifies headless runs resolve the job owner's
+// stored LLM settings instead of the server default provider.
+func TestRunOnceUsesOwnerSettings(t *testing.T) {
+	var gotAuth, gotModel string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		var body struct {
+			Model string `json:"model"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		gotModel = body.Model
+
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"done\"},\"finish_reason\":null}]}\n\n"))
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n"))
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer upstream.Close()
+
+	s, dbConn := newStore(t)
+	seedUser(t, dbConn, 1)
+
+	_, err := s.UpsertUserSettings(t.Context(), db.UpsertUserSettingsParams{
+		UserID:      1,
+		LlmProvider: "openai",
+		LlmBaseUrl:  upstream.URL,
+		LlmApiKey:   "sk-owner",
+		LlmModel:    "owner-model",
+	})
+	require.NoError(t, err)
+
+	engine := &chat.Engine{
+		Store:       s,
+		LLM:         &chat.LLMResolver{Store: s, Default: llm.NewMock()},
+		Tools:       tool.NewRegistry(),
+		Permissions: permission.NewRuleset(permission.Allow, nil),
+		Headless:    true,
+	}
+	sched := scheduler.New(s, engine, time.Minute)
+	createDueJob(t, s, 1, "0 8 * * *", "brief me", 1)
+
+	require.NoError(t, sched.RunOnce(t.Context()))
+
+	assert.Equal(t, "Bearer sk-owner", gotAuth)
+	assert.Equal(t, "owner-model", gotModel)
+}
+
 func TestRunOnceSkipsDisabledAndFutureJobs(t *testing.T) {
 	s, dbConn := newStore(t)
 	seedUser(t, dbConn, 1)
@@ -166,7 +215,7 @@ func TestRunOnceSkipsDisabledAndFutureJobs(t *testing.T) {
 	provider := &scriptedProvider{rounds: [][]llm.Chunk{}}
 	engine := &chat.Engine{
 		Store:       s,
-		LLM:         provider,
+		LLM:         &chat.LLMResolver{Store: s, Default: provider},
 		Tools:       tool.NewRegistry(),
 		Permissions: permission.NewRuleset(permission.Allow, nil),
 		Headless:    true,
@@ -206,7 +255,7 @@ func TestRunOnceHeadlessAskDeniesTool(t *testing.T) {
 	}}
 	engine := &chat.Engine{
 		Store:       s,
-		LLM:         provider,
+		LLM:         &chat.LLMResolver{Store: s, Default: provider},
 		Tools:       clockRegistry(t),
 		Permissions: permission.NewRuleset(permission.Ask, nil),
 		Headless:    true,
@@ -241,7 +290,7 @@ func TestRunOnceRecordsProviderError(t *testing.T) {
 
 	engine := &chat.Engine{
 		Store:       s,
-		LLM:         &errorProvider{},
+		LLM:         &chat.LLMResolver{Store: s, Default: &errorProvider{}},
 		Tools:       tool.NewRegistry(),
 		Permissions: permission.NewRuleset(permission.Allow, nil),
 		Headless:    true,
@@ -269,7 +318,7 @@ func TestStartStop(t *testing.T) {
 
 	engine := &chat.Engine{
 		Store:       s,
-		LLM:         llm.NewMock(),
+		LLM:         &chat.LLMResolver{Store: s, Default: llm.NewMock()},
 		Tools:       tool.NewRegistry(),
 		Permissions: permission.NewRuleset(permission.Allow, nil),
 		Headless:    true,

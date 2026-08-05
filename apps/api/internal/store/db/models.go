@@ -80,3 +80,12 @@ type ToolCall struct {
 	Status    string
 	CreatedAt time.Time
 }
+
+type UserSetting struct {
+	UserID      int64
+	LlmProvider string
+	LlmBaseUrl  string
+	LlmApiKey   string
+	LlmModel    string
+	UpdatedAt   time.Time
+}

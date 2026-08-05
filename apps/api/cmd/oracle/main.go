@@ -79,7 +79,7 @@ func main() {
 	ruleset := permission.NewRuleset(cfg.PermissionDefault, cfg.PermissionRules)
 	engine := &chat.Engine{
 		Store:       st,
-		LLM:         provider,
+		LLM:         &chat.LLMResolver{Store: st, Default: provider},
 		Tools:       tools,
 		Permissions: ruleset,
 	}

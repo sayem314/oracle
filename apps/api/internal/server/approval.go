@@ -116,7 +116,8 @@ func streamApproval(deps Deps, c fiber.Ctx, s *sse.Stream) error {
 	if err != nil {
 		return sendChatError(s, err)
 	}
-	if err := deps.Chat.Run(ctx, sink, call.SessionID, llm.Request{Messages: history}); err != nil {
+	userID := c.Locals(userIDKey{}).(int64)
+	if err := deps.Chat.Run(ctx, sink, call.SessionID, userID, llm.Request{Messages: history}); err != nil {
 		return sendChatError(s, err)
 	}
 	return nil

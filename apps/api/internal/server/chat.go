@@ -17,6 +17,7 @@ type chatLocalsKey struct{}
 
 type chatContext struct {
 	sessionID     int64
+	userID        int64
 	userMessageID int64
 	request       llm.Request
 }
@@ -109,6 +110,7 @@ func prepareChat(deps Deps, c fiber.Ctx) (chatContext, error) {
 
 	return chatContext{
 		sessionID:     sessionID,
+		userID:        userID,
 		userMessageID: userMsg.ID,
 		request:       llm.Request{Model: req.Model, Messages: history},
 	}, nil
@@ -125,7 +127,7 @@ func streamChat(deps Deps, c fiber.Ctx, s *sse.Stream) error {
 		return err
 	}
 
-	if err := deps.Chat.Run(s.Context(), sink, cc.sessionID, cc.request); err != nil {
+	if err := deps.Chat.Run(s.Context(), sink, cc.sessionID, cc.userID, cc.request); err != nil {
 		return sendChatError(s, err)
 	}
 	return nil

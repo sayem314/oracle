@@ -40,6 +40,10 @@ type Store interface {
 	ClaimJob(ctx context.Context, arg db.ClaimJobParams) (int64, error)
 	SetJobStatus(ctx context.Context, arg db.SetJobStatusParams) error
 	SetJobSession(ctx context.Context, arg db.SetJobSessionParams) error
+
+	GetUserSettings(ctx context.Context, userID int64) (db.UserSetting, error)
+	UpsertUserSettings(ctx context.Context, arg db.UpsertUserSettingsParams) (db.UserSetting, error)
+	DeleteUserSettings(ctx context.Context, userID int64) error
 }
 
 // sqlStore embeds the generated Queries and adds methods that need more than

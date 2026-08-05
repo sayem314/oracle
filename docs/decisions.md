@@ -2,6 +2,15 @@
 
 Lightweight ADRs. Latest first.
 
+## 2026-08-05: Per-user LLM settings (Step 11)
+
+- Provider, base URL, API key, and model moved from env-only config to a per-user `user_settings` row (PK = user_id, FK -> auth_users CASCADE). Env config stays as the admin-supplied default: a user with no settings row (or a blank one) resolves to the provider built from `ORACLE_LLM_*`. Precedence per run: per-request model override > the user's settings > env defaults, and the user's settings win all-or-nothing (no field-level merge with env) so a half-configured row can't silently mix a user's base URL with an admin's key.
+- The provider is resolved per run, not per process: `chat.Engine.LLM` changed from an `llm.Provider` to a small `Resolver` interface (`Resolve(ctx, userID) (llm.Provider, error)`), implemented by `chat.LLMResolver` over the store. `Engine.Run` gained the `userID` it already implicitly had at every call site (chat handler locals, approval locals, `job.UserID`), so headless scheduler runs use the job owner's settings. Building an OpenAI client per run is cheap (no connection at construction), and resolving once per run means settings edits take effect on the next message without a restart.
+- API keys are stored plaintext in SQLite. Encryption was considered and rejected for now: keys are rotatable, the DB file is already trusted self-hosted state, and a symmetric scheme would need its own key management plus a decrypt on every run. The protection that matters is at the boundary instead — `GET /api/v1/settings` never returns the key, only `has_api_key`, and `PUT` accepts an empty `api_key` as "keep the stored one" so the UI never has to round-trip it. Revisit if multi-tenant hosting or DB-file sharing becomes a story.
+- Settings API is `GET/PUT /api/v1/settings` behind the session middleware: PUT validates `provider` is empty (clear settings, fall back to default) or `openai` (requires base_url + model + a key, new or kept). A `provider` field anticipates future non-OpenAI gateways, but only the single OpenAI-compatible protocol exists today, so `openai` covers any compatible gateway via base URL.
+- The chat request already carried an optional `model` override that the OpenAI adapter honored; it is now wired end-to-end with a per-message model input in the composer (blank = the user's/settings default). The SvelteKit app gained a Settings page (provider select, base URL, masked key, model) behind a nav link.
+- Deferred: per-user permission rulesets still global (the Step 9 note stands), model listing/validation against the gateway (a typo'd model surfaces as a provider error at run time), and admin visibility into whose settings resolve to what.
+
 ## 2026-08-05: Deploy, two containers behind one port (Step 10c)
 
 - The deploy is two containers: `api` (the Go binary) and `web` (the SvelteKit app), joined on a compose network, with only the web port published. Nothing about the app assumed a deploy target until now, so the split follows the process boundary that already existed in dev (vite proxies `/api` and `/auth` to Go).
@@ -148,5 +157,4 @@ Lightweight ADRs. Latest first.
 
 ## Planned (not built yet)
 
-- Per-user LLM credentials: provider, API key, base URL, and model move from env config to per-user settings in the database (auth has landed), and chat requests can carry a model override so users switch models mid-conversation, the way modern agent and IDE tools do. Whether env config is removed or kept as an admin-supplied default is decided then.
 - API-first: OpenAPI spec. Codegen approach evaluated per step.

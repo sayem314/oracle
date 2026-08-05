@@ -28,6 +28,7 @@
         {#if isAdmin}
           <a href="/users" class:active={path.startsWith("/users")}>Users</a>
         {/if}
+        <a href="/settings" class:active={path.startsWith("/settings")}>Settings</a>
       </nav>
     </div>
     <div class="right">

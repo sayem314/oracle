@@ -313,7 +313,7 @@ func TestMigrateIsIdempotent(t *testing.T) {
 
 	applied, err := store.Migrate(dbConn)
 	require.NoError(t, err)
-	assert.Equal(t, 5, applied)
+	assert.Equal(t, 6, applied)
 
 	applied, err = store.Migrate(dbConn)
 	require.NoError(t, err)
@@ -436,4 +436,43 @@ func TestListDueJobs(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, got, 1)
 	assert.Equal(t, "due", got[0].Prompt)
+}
+
+func TestUserSettings(t *testing.T) {
+	s, dbConn := openStore(t)
+	ctx := t.Context()
+	seedUser(t, dbConn, 1)
+
+	_, err := s.GetUserSettings(ctx, 1)
+	require.ErrorIs(t, err, sql.ErrNoRows)
+
+	created, err := s.UpsertUserSettings(ctx, db.UpsertUserSettingsParams{
+		UserID:      1,
+		LlmProvider: "openai",
+		LlmBaseUrl:  "https://api.example.com/v1",
+		LlmApiKey:   "sk-test",
+		LlmModel:    "example-1",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), created.UserID)
+	assert.Equal(t, "openai", created.LlmProvider)
+
+	got, err := s.GetUserSettings(ctx, 1)
+	require.NoError(t, err)
+	assert.Equal(t, created, got)
+
+	updated, err := s.UpsertUserSettings(ctx, db.UpsertUserSettingsParams{
+		UserID:      1,
+		LlmProvider: "openai",
+		LlmBaseUrl:  "https://other.example.com/v1",
+		LlmApiKey:   "sk-rotated",
+		LlmModel:    "example-2",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "https://other.example.com/v1", updated.LlmBaseUrl)
+	assert.Equal(t, "sk-rotated", updated.LlmApiKey)
+
+	require.NoError(t, s.DeleteUserSettings(ctx, 1))
+	_, err = s.GetUserSettings(ctx, 1)
+	require.ErrorIs(t, err, sql.ErrNoRows)
 }

@@ -38,6 +38,9 @@ func New(deps Deps) *fiber.App {
 	api.Patch("/jobs/:id", newUpdateJobHandler(deps))
 	api.Delete("/jobs/:id", newDeleteJobHandler(deps))
 
+	api.Get("/settings", newGetSettingsHandler(deps))
+	api.Put("/settings", newUpdateSettingsHandler(deps))
+
 	api.Get("/sessions", newListSessionsHandler(deps))
 	api.Get("/sessions/:id/messages", newListMessagesHandler(deps))
 	api.Patch("/sessions/:id", newUpdateSessionHandler(deps))
