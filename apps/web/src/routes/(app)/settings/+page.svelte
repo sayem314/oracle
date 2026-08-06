@@ -6,11 +6,21 @@
     updateLLMProvider,
     deleteLLMProvider,
     fetchProviderModels,
+    changePassword,
     type LLMProvider,
   } from "$lib/api";
 
   let { data } = $props<{ data: import("./$types").PageData }>();
   let isAdmin = $derived(data.user?.role === "admin");
+
+  let curPw = $state("");
+  let newPw = $state("");
+  let confirmPw = $state("");
+  let revokeOtherSessions = $state(true);
+  let pwSaving = $state(false);
+  let pwError = $state("");
+  let pwNotice = $state("");
+  let pwValid = $derived(curPw !== "" && newPw.length >= 8 && newPw === confirmPw);
 
   let providers = $state<LLMProvider[]>([]);
   let loading = $state(true);
@@ -153,13 +163,31 @@
       error = err instanceof Error ? err.message : "failed to delete provider";
     }
   }
+
+  async function changePw() {
+    if (pwSaving || !pwValid) return;
+    pwSaving = true;
+    pwError = "";
+    pwNotice = "";
+    try {
+      await changePassword(curPw, newPw, revokeOtherSessions);
+      curPw = "";
+      newPw = "";
+      confirmPw = "";
+      pwNotice = "Password updated.";
+    } catch (err) {
+      pwError = err instanceof Error ? err.message : "failed to change password";
+    } finally {
+      pwSaving = false;
+    }
+  }
 </script>
 
 <div class="settings">
-  {#if !isAdmin}
-    <div class="empty">Admin access required to manage providers.</div>
-  {:else}
-    <div class="column">
+  <div class="column">
+    {#if !isAdmin}
+      <div class="empty">Admin access required to manage providers.</div>
+    {:else}
       <div class="toolbar">
         <h1>Settings</h1>
         <button class="primary" type="button" onclick={startAdd}>Add provider</button>
@@ -275,8 +303,54 @@
           {/each}
         </div>
       {/if}
-    </div>
-  {/if}
+    {/if}
+
+    <form
+      class="form"
+      onsubmit={(e) => {
+        e.preventDefault();
+        void changePw();
+      }}
+    >
+      <h2>Change password</h2>
+      {#if pwError}
+        <div class="error">{pwError}</div>
+      {/if}
+      {#if pwNotice}
+        <div class="notice">{pwNotice}</div>
+      {/if}
+      <div class="field">
+        <label>
+          Current password
+          <input type="password" bind:value={curPw} autocomplete="current-password" />
+        </label>
+      </div>
+      <div class="field">
+        <label>
+          New password (at least 8 characters)
+          <input type="password" bind:value={newPw} autocomplete="new-password" />
+        </label>
+      </div>
+      <div class="field">
+        <label>
+          Confirm new password
+          <input type="password" bind:value={confirmPw} autocomplete="new-password" />
+        </label>
+        {#if confirmPw !== "" && confirmPw !== newPw}
+          <div class="hint">Passwords do not match.</div>
+        {/if}
+      </div>
+      <label class="check">
+        <input type="checkbox" bind:checked={revokeOtherSessions} />
+        Sign out of my other devices
+      </label>
+      <div class="actions">
+        <button class="primary" type="submit" disabled={pwSaving || !pwValid}>
+          {pwSaving ? "Saving..." : "Change password"}
+        </button>
+      </div>
+    </form>
+  </div>
 </div>
 
 <style>
@@ -495,5 +569,18 @@
     color: var(--text-dim);
     text-align: center;
     padding: 40px 0;
+  }
+
+  .hint {
+    color: var(--danger);
+    font-size: 12px;
+  }
+
+  .check {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: var(--text-dim);
   }
 </style>

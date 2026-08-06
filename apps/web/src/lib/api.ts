@@ -86,6 +86,18 @@ export async function signOut(): Promise<void> {
   await postJSON("/auth/signout", {});
 }
 
+export async function changePassword(
+  currentPassword: string,
+  newPassword: string,
+  revokeOtherSessions = true,
+): Promise<void> {
+  await postJSON("/auth/passwords/change", {
+    current_password: currentPassword,
+    new_password: newPassword,
+    revoke_other_sessions: revokeOtherSessions,
+  });
+}
+
 export interface ToolCallInfo {
   id: string;
   name: string;

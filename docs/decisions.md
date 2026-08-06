@@ -2,6 +2,13 @@
 
 Lightweight ADRs. Latest first.
 
+## 2026-08-06: Password change for non-admin users (Step 10b follow-up)
+
+- Non-admin users had no settings surface at all: the Settings page was admin-gated for providers, and rotating a password meant asking the admin to recreate the account. Password change is a pure self-service boundary, so it needed no new backend: Limen already serves `POST /auth/passwords/change` (session-protected, `current_password` + `new_password` + `revoke_other_sessions`, rate-limited 5 per 10 minutes) and the app already mounts Limen's handler under `/auth/*`, so the endpoint was live the day the page gained the form.
+- The form lives on the Settings page, which is now open to every session: the provider manager stays inside the admin-only block, and the password section is for everyone. `revoke_other_sessions` defaults to on because the common rotation story is a shared device that just left the household. Limen's plugin policy validates the new password (min 8 characters plus upper/lower/number per the plugin defaults); the form mirrors the length and match checks client-side and surfaces the server's `{"message": ...}` error verbatim.
+- One gotcha worth recording: Limen's CSRF middleware rejects any non-GET request without `Content-Type: application/json` with a bare 403 "Forbidden", which reads like an auth failure in logs. The browser fetch client always sends the header, so only scripted clients are affected.
+- Verified end-to-end against a scratch instance: signup, change with the wrong current password (401 "current password is invalid"), change with a weak new password, success, old-password sign-in rejected, new-password sign-in accepted. Limen replaces the session cookie on success, so the user stays signed in.
+
 ## 2026-08-06: Backup tooling for the Docker volume (Step 10c follow-up)
 
 - All state is a WAL-mode SQLite file on the named `oracle-data` volume, and until now there was no way to get data out of it: a raw `docker cp`/tar copy of a live WAL database is not guaranteed consistent, and `docker compose down -v` is one command away from total loss. `scripts/backup.sh` wraps one-shot alpine containers that mount the volume: `make backup` takes a snapshot via the sqlite3 CLI's `.backup` (the SQLite online backup API — WAL-aware, no downtime, one self-contained file) and prunes to `KEEP` (default 14); `make backup-restore FILE=...` stops the api, replaces the main file, removes the stale `-wal`/`-shm` files that belong to the old database, and restarts.
