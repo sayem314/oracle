@@ -10,7 +10,10 @@ import (
 
 // NewBuiltin returns the tools oracle ships with.
 func NewBuiltin() []Tool {
-	return []Tool{getTimeTool()}
+	return []Tool{
+		getTimeTool(),
+		webFetchTool(ssrfClient()),
+	}
 }
 
 func getTimeTool() Tool {

@@ -2,6 +2,12 @@
 
 Lightweight ADRs. Latest first.
 
+## 2026-08-06: web_fetch builtin tool with SSRF guard
+
+- The toolbox had exactly one tool (get_time), fine for the mock but thin for a real gateway. `web_fetch` does an HTTP GET and returns the body as text (HTML stripped, capped at 512 KiB, client timeout 15 s). Binary or unsupported content types are refused rather than dumped at the model.
+- A server-side fetch tool is a remote-code-execution doorway unless the outbound target is constrained, so the tool refuses to dial special-purpose ranges: the RFC 1918/6598/6890 private block, loopback, link-local (which covers the cloud metadata host `169.254.169.254`), multicast, documentation/test ranges, and the IPv6 equivalents. The check runs at dial time against a freshly resolved address and the connection is made to that validated IP directly, so a DNS answer cannot be swapped after the check. Proxying is disabled so a corporate proxy cannot be used to hop around the guard.
+- The SSRF client is injected: production `NewBuiltin()` passes the hardened client, tests pass a plain one (httptest runs on loopback), keeping the guard in the shipped path and out of the test path. The block-list is a data table with a unit test per range.
+
 ## 2026-08-06: OpenAPI spec for the /api/v1 surface
 
 - The API surface stabilized (chat, approvals, jobs, providers, prefs, sessions, users), so the documented "API-first: OpenAPI spec" item is now done. `docs/openapi.yaml` is a hand-written OpenAPI 3.1 document covering every route the API serves, with request/response schemas derived from the handler structs (not copied from the frontend, so it stays truthful).
