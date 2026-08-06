@@ -12,7 +12,7 @@ import (
 const createSession = `-- name: CreateSession :one
 INSERT INTO sessions (user_id, title)
 VALUES (?, ?)
-RETURNING id, user_id, title, created_at, updated_at, summary
+RETURNING id, user_id, title, summary, created_at, updated_at
 `
 
 type CreateSessionParams struct {
@@ -27,9 +27,9 @@ func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) (S
 		&i.ID,
 		&i.UserID,
 		&i.Title,
+		&i.Summary,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.Summary,
 	)
 	return i, err
 }
@@ -45,7 +45,7 @@ func (q *Queries) DeleteSession(ctx context.Context, id int64) error {
 }
 
 const getSession = `-- name: GetSession :one
-SELECT id, user_id, title, created_at, updated_at, summary
+SELECT id, user_id, title, summary, created_at, updated_at
 FROM sessions
 WHERE id = ?
 `
@@ -57,15 +57,15 @@ func (q *Queries) GetSession(ctx context.Context, id int64) (Session, error) {
 		&i.ID,
 		&i.UserID,
 		&i.Title,
+		&i.Summary,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.Summary,
 	)
 	return i, err
 }
 
 const listSessions = `-- name: ListSessions :many
-SELECT id, user_id, title, created_at, updated_at, summary
+SELECT id, user_id, title, summary, created_at, updated_at
 FROM sessions
 WHERE user_id = ?
 ORDER BY updated_at DESC, id DESC
@@ -91,9 +91,9 @@ func (q *Queries) ListSessions(ctx context.Context, arg ListSessionsParams) ([]S
 			&i.ID,
 			&i.UserID,
 			&i.Title,
+			&i.Summary,
 			&i.CreatedAt,
 			&i.UpdatedAt,
-			&i.Summary,
 		); err != nil {
 			return nil, err
 		}

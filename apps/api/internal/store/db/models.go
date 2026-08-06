@@ -86,9 +86,9 @@ type Session struct {
 	ID        int64
 	UserID    int64
 	Title     string
+	Summary   string
 	CreatedAt time.Time
 	UpdatedAt time.Time
-	Summary   string
 }
 
 type ToolCall struct {
