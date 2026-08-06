@@ -240,7 +240,7 @@ func TestProviderDelete(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, res.StatusCode)
 }
 
-func TestProvidersIsolatedPerUser(t *testing.T) {
+func TestProvidersAdminOnly(t *testing.T) {
 	app, _, dbConn := newTestApp(t, llm.NewMock())
 	ownerCookie, _ := signUp(t, app, dbConn, "owner@example.com")
 
@@ -255,15 +255,19 @@ func TestProvidersIsolatedPerUser(t *testing.T) {
 	require.Equal(t, http.StatusCreated, res.StatusCode)
 	created := decodeProvider(t, res)
 
+	// Members can read the list (the chat picker needs it)...
 	res = doProviderRequest(t, app, http.MethodGet, "/api/v1/llm/providers", memberCookie, nil)
 	require.Equal(t, http.StatusOK, res.StatusCode)
-	assert.Empty(t, decodeProviderList(t, res))
+	require.Len(t, decodeProviderList(t, res), 1)
 
+	// ...but cannot create, edit, or delete providers.
+	res = doProviderRequest(t, app, http.MethodPost, "/api/v1/llm/providers", memberCookie, validProviderPayload("mine"))
+	require.Equal(t, http.StatusForbidden, res.StatusCode)
 	path := "/api/v1/llm/providers/" + itoa(created.ID)
 	res = doProviderRequest(t, app, http.MethodPatch, path, memberCookie, validProviderPayload("stolen"))
-	assert.Equal(t, http.StatusNotFound, res.StatusCode)
+	require.Equal(t, http.StatusForbidden, res.StatusCode)
 	res = doProviderRequest(t, app, http.MethodDelete, path, memberCookie, nil)
-	assert.Equal(t, http.StatusNotFound, res.StatusCode)
+	require.Equal(t, http.StatusForbidden, res.StatusCode)
 }
 
 // TestChatUsesSelectedProvider verifies the chat request's provider_id picks
@@ -327,4 +331,138 @@ func TestChatUsesSelectedProvider(t *testing.T) {
 		decodeFrame(t, errs[0], &chatErr)
 		assert.Contains(t, chatErr.Message, "provider not found")
 	})
+}
+
+type prefsBody struct {
+	ProviderID int64  `json:"provider_id"`
+	Model      string `json:"model"`
+}
+
+func decodePrefs(t *testing.T, res *http.Response) prefsBody {
+	t.Helper()
+	var body prefsBody
+	require.NoError(t, json.NewDecoder(res.Body).Decode(&body))
+	return body
+}
+
+func TestLLMPrefs(t *testing.T) {
+	app, _, dbConn := newTestApp(t, llm.NewMock())
+	cookie, _ := signUp(t, app, dbConn, "owner@example.com")
+
+	res := doProviderRequest(t, app, http.MethodGet, "/api/v1/llm/prefs", cookie, nil)
+	require.Equal(t, http.StatusOK, res.StatusCode)
+	assert.Zero(t, decodePrefs(t, res).ProviderID)
+
+	// A pref must point at an existing provider.
+	res = doProviderRequest(t, app, http.MethodPut, "/api/v1/llm/prefs", cookie, map[string]any{"provider_id": 999})
+	require.Equal(t, http.StatusNotFound, res.StatusCode)
+
+	res = doProviderRequest(t, app, http.MethodPost, "/api/v1/llm/providers", cookie, validProviderPayload("router"))
+	require.Equal(t, http.StatusCreated, res.StatusCode)
+	provider := decodeProvider(t, res)
+
+	// The model must belong to the provider.
+	res = doProviderRequest(t, app, http.MethodPut, "/api/v1/llm/prefs", cookie, map[string]any{"provider_id": provider.ID, "model": "nope"})
+	require.Equal(t, http.StatusBadRequest, res.StatusCode)
+
+	res = doProviderRequest(t, app, http.MethodPut, "/api/v1/llm/prefs", cookie, map[string]any{"provider_id": provider.ID, "model": "router-model-2"})
+	require.Equal(t, http.StatusOK, res.StatusCode)
+	got := decodePrefs(t, res)
+	assert.Equal(t, provider.ID, got.ProviderID)
+	assert.Equal(t, "router-model-2", got.Model)
+
+	res = doProviderRequest(t, app, http.MethodGet, "/api/v1/llm/prefs", cookie, nil)
+	require.Equal(t, http.StatusOK, res.StatusCode)
+	got = decodePrefs(t, res)
+	assert.Equal(t, provider.ID, got.ProviderID)
+	assert.Equal(t, "router-model-2", got.Model)
+
+	// provider_id 0 clears the pref.
+	res = doProviderRequest(t, app, http.MethodPut, "/api/v1/llm/prefs", cookie, map[string]any{"provider_id": 0})
+	require.Equal(t, http.StatusOK, res.StatusCode)
+	res = doProviderRequest(t, app, http.MethodGet, "/api/v1/llm/prefs", cookie, nil)
+	require.Equal(t, http.StatusOK, res.StatusCode)
+	assert.Zero(t, decodePrefs(t, res).ProviderID)
+
+	// Deleting the provider leaves a dangling pref that reads back empty.
+	res = doProviderRequest(t, app, http.MethodPut, "/api/v1/llm/prefs", cookie, map[string]any{"provider_id": provider.ID})
+	require.Equal(t, http.StatusOK, res.StatusCode)
+	res = doProviderRequest(t, app, http.MethodDelete, "/api/v1/llm/providers/"+itoa(provider.ID), cookie, nil)
+	require.Equal(t, http.StatusNoContent, res.StatusCode)
+	res = doProviderRequest(t, app, http.MethodGet, "/api/v1/llm/prefs", cookie, nil)
+	require.Equal(t, http.StatusOK, res.StatusCode)
+	assert.Zero(t, decodePrefs(t, res).ProviderID)
+}
+
+// TestChatUsesUserPrefProvider verifies a user's stored default preference wins
+// over the global default profile, and an explicit provider_id wins over both.
+func TestChatUsesUserPrefProvider(t *testing.T) {
+	var globalAuth, globalModel, prefAuth, prefModel string
+	newUpstream := func(auth, model *string) *httptest.Server {
+		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			*auth = r.Header.Get("Authorization")
+			var body struct {
+				Model string `json:"model"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			*model = body.Model
+
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"hi\"},\"finish_reason\":null}]}\n\n"))
+			_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n"))
+			_, _ = w.Write([]byte("data: [DONE]\n\n"))
+		}))
+	}
+	globalUpstream := newUpstream(&globalAuth, &globalModel)
+	defer globalUpstream.Close()
+	prefUpstream := newUpstream(&prefAuth, &prefModel)
+	defer prefUpstream.Close()
+
+	app, _, dbConn := newTestApp(t, llm.NewMock())
+	cookie, _ := signUp(t, app, dbConn, "owner@example.com")
+
+	globalPayload := validProviderPayload("global")
+	globalPayload["base_url"] = globalUpstream.URL
+	res := doProviderRequest(t, app, http.MethodPost, "/api/v1/llm/providers", cookie, globalPayload)
+	require.Equal(t, http.StatusCreated, res.StatusCode)
+	global := decodeProvider(t, res)
+	assert.True(t, global.Default)
+
+	prefPayload := validProviderPayload("preferred")
+	prefPayload["base_url"] = prefUpstream.URL
+	res = doProviderRequest(t, app, http.MethodPost, "/api/v1/llm/providers", cookie, prefPayload)
+	require.Equal(t, http.StatusCreated, res.StatusCode)
+	preferred := decodeProvider(t, res)
+
+	t.Run("global default without pref", func(t *testing.T) {
+		res := postChat(t, app, cookie, map[string]any{"message": "hi"})
+		require.Equal(t, http.StatusOK, res.StatusCode)
+		parseSSE(t, res.Body)
+
+		assert.Equal(t, "Bearer sk-global", globalAuth)
+		assert.Equal(t, "global-model-1", globalModel)
+		assert.Empty(t, prefAuth)
+	})
+
+	// The user's pref provider and model beat the global default.
+	res = doProviderRequest(t, app, http.MethodPut, "/api/v1/llm/prefs", cookie, map[string]any{
+		"provider_id": preferred.ID,
+		"model":       "preferred-model-2",
+	})
+	require.Equal(t, http.StatusOK, res.StatusCode)
+
+	res = postChat(t, app, cookie, map[string]any{"message": "hi"})
+	require.Equal(t, http.StatusOK, res.StatusCode)
+	parseSSE(t, res.Body)
+
+	assert.Equal(t, "Bearer sk-preferred", prefAuth)
+	assert.Equal(t, "preferred-model-2", prefModel)
+
+	// An explicit provider_id on the request still wins.
+	res = postChat(t, app, cookie, map[string]any{"message": "hi", "provider_id": global.ID})
+	require.Equal(t, http.StatusOK, res.StatusCode)
+	parseSSE(t, res.Body)
+
+	assert.Equal(t, "Bearer sk-global", globalAuth)
+	assert.Equal(t, "global-model-1", globalModel)
 }

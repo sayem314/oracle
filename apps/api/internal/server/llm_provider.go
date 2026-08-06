@@ -91,15 +91,13 @@ func (req llmProviderRequest) normalize() (string, string, []string, string, err
 	return name, baseURL, models, defaultModel, nil
 }
 
-// resolveOwnedProvider loads a provider and verifies the caller owns it. A
-// missing or foreign provider is a 404 so existence is never leaked.
-func resolveOwnedProvider(deps Deps, c fiber.Ctx) (db.LlmProvider, error) {
+// resolveProvider loads a provider or returns 404 so existence is never leaked.
+func resolveProvider(deps Deps, c fiber.Ctx) (db.LlmProvider, error) {
 	id, err := strconv.ParseInt(c.Params("id"), 10, 64)
 	if err != nil || id <= 0 {
 		return db.LlmProvider{}, fiber.NewError(fiber.StatusBadRequest, "invalid provider id")
 	}
 
-	userID := c.Locals(userIDKey{}).(int64)
 	provider, err := deps.Store.GetLLMProvider(c.Context(), id)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -107,16 +105,12 @@ func resolveOwnedProvider(deps Deps, c fiber.Ctx) (db.LlmProvider, error) {
 		}
 		return db.LlmProvider{}, err
 	}
-	if provider.UserID != userID {
-		return db.LlmProvider{}, fiber.NewError(fiber.StatusNotFound, "provider not found")
-	}
 	return provider, nil
 }
 
 func newListLLMProvidersHandler(deps Deps) fiber.Handler {
 	return func(c fiber.Ctx) error {
-		userID := c.Locals(userIDKey{}).(int64)
-		providers, err := deps.Store.ListLLMProvidersByUser(c.Context(), userID)
+		providers, err := deps.Store.ListLLMProviders(c.Context())
 		if err != nil {
 			return err
 		}
@@ -134,8 +128,6 @@ func newListLLMProvidersHandler(deps Deps) fiber.Handler {
 
 func newCreateLLMProviderHandler(deps Deps) fiber.Handler {
 	return func(c fiber.Ctx) error {
-		userID := c.Locals(userIDKey{}).(int64)
-
 		var req llmProviderRequest
 		if err := c.Bind().JSON(&req); err != nil {
 			return fiber.NewError(fiber.StatusBadRequest, "invalid request body")
@@ -151,20 +143,19 @@ func newCreateLLMProviderHandler(deps Deps) fiber.Handler {
 
 		ctx := c.Context()
 
-		// The first profile a user creates becomes their default.
-		existing, err := deps.Store.ListLLMProvidersByUser(ctx, userID)
+		// The first profile on the instance becomes the global default.
+		existing, err := deps.Store.ListLLMProviders(ctx)
 		if err != nil {
 			return err
 		}
 		isDefault := req.Default || len(existing) == 0
 		if isDefault {
-			if err := deps.Store.ClearDefaultLLMProviders(ctx, userID); err != nil {
+			if err := deps.Store.ClearDefaultLLMProviders(ctx); err != nil {
 				return err
 			}
 		}
 
 		created, err := deps.Store.CreateLLMProvider(ctx, db.CreateLLMProviderParams{
-			UserID:    userID,
 			Name:      name,
 			Provider:  req.Provider,
 			BaseUrl:   baseURL,
@@ -192,7 +183,7 @@ func newCreateLLMProviderHandler(deps Deps) fiber.Handler {
 
 func newUpdateLLMProviderHandler(deps Deps) fiber.Handler {
 	return func(c fiber.Ctx) error {
-		provider, err := resolveOwnedProvider(deps, c)
+		provider, err := resolveProvider(deps, c)
 		if err != nil {
 			return err
 		}
@@ -212,13 +203,12 @@ func newUpdateLLMProviderHandler(deps Deps) fiber.Handler {
 		}
 
 		ctx := c.Context()
-		userID := c.Locals(userIDKey{}).(int64)
 
 		// default:true promotes this profile; false leaves the flag untouched so
-		// an edit cannot silently drop the user's default.
+		// an edit cannot silently drop the global default.
 		isDefault := provider.IsDefault
 		if req.Default {
-			if err := deps.Store.ClearDefaultLLMProviders(ctx, userID); err != nil {
+			if err := deps.Store.ClearDefaultLLMProviders(ctx); err != nil {
 				return err
 			}
 			isDefault = 1
@@ -256,7 +246,7 @@ func newUpdateLLMProviderHandler(deps Deps) fiber.Handler {
 
 func newDeleteLLMProviderHandler(deps Deps) fiber.Handler {
 	return func(c fiber.Ctx) error {
-		provider, err := resolveOwnedProvider(deps, c)
+		provider, err := resolveProvider(deps, c)
 		if err != nil {
 			return err
 		}

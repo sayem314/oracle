@@ -43,14 +43,18 @@ type Store interface {
 
 	CreateLLMProvider(ctx context.Context, arg db.CreateLLMProviderParams) (db.LlmProvider, error)
 	GetLLMProvider(ctx context.Context, id int64) (db.LlmProvider, error)
-	ListLLMProvidersByUser(ctx context.Context, userID int64) ([]db.LlmProvider, error)
-	GetDefaultLLMProvider(ctx context.Context, userID int64) (db.LlmProvider, error)
+	ListLLMProviders(ctx context.Context) ([]db.LlmProvider, error)
+	GetDefaultLLMProvider(ctx context.Context) (db.LlmProvider, error)
 	UpdateLLMProvider(ctx context.Context, arg db.UpdateLLMProviderParams) (db.LlmProvider, error)
-	ClearDefaultLLMProviders(ctx context.Context, userID int64) error
+	ClearDefaultLLMProviders(ctx context.Context) error
 	DeleteLLMProvider(ctx context.Context, id int64) error
 	ListLLMModelsByProvider(ctx context.Context, providerID int64) ([]db.LlmModel, error)
 	InsertLLMModel(ctx context.Context, arg db.InsertLLMModelParams) error
 	DeleteLLMModelsByProvider(ctx context.Context, providerID int64) error
+
+	GetUserLLMPrefs(ctx context.Context, userID int64) (db.UserLlmPref, error)
+	UpsertUserLLMPrefs(ctx context.Context, arg db.UpsertUserLLMPrefsParams) (db.UserLlmPref, error)
+	DeleteUserLLMPrefs(ctx context.Context, userID int64) error
 }
 
 // sqlStore embeds the generated Queries and adds methods that need more than

@@ -40,9 +40,12 @@ func New(deps Deps) *fiber.App {
 
 	providers := api.Group("/llm/providers")
 	providers.Get("", newListLLMProvidersHandler(deps))
-	providers.Post("", newCreateLLMProviderHandler(deps))
-	providers.Patch("/:id", newUpdateLLMProviderHandler(deps))
-	providers.Delete("/:id", newDeleteLLMProviderHandler(deps))
+	providersAdmin := api.Group("/llm/providers", requireAdmin(deps.Auth))
+	providersAdmin.Post("", newCreateLLMProviderHandler(deps))
+	providersAdmin.Patch("/:id", newUpdateLLMProviderHandler(deps))
+	providersAdmin.Delete("/:id", newDeleteLLMProviderHandler(deps))
+	api.Get("/llm/prefs", newGetLLMPrefsHandler(deps))
+	api.Put("/llm/prefs", newPutLLMPrefsHandler(deps))
 
 	api.Get("/sessions", newListSessionsHandler(deps))
 	api.Get("/sessions/:id/messages", newListMessagesHandler(deps))

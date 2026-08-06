@@ -313,7 +313,7 @@ func TestMigrateIsIdempotent(t *testing.T) {
 
 	applied, err := store.Migrate(dbConn)
 	require.NoError(t, err)
-	assert.Equal(t, 7, applied)
+	assert.Equal(t, 8, applied)
 
 	applied, err = store.Migrate(dbConn)
 	require.NoError(t, err)
@@ -443,11 +443,10 @@ func TestLLMProviders(t *testing.T) {
 	ctx := t.Context()
 	seedUser(t, dbConn, 1)
 
-	_, err := s.GetDefaultLLMProvider(ctx, 1)
+	_, err := s.GetDefaultLLMProvider(ctx)
 	require.ErrorIs(t, err, sql.ErrNoRows)
 
 	created, err := s.CreateLLMProvider(ctx, db.CreateLLMProviderParams{
-		UserID:    1,
 		Name:      "OpenRouter",
 		Provider:  "openai",
 		BaseUrl:   "https://openrouter.ai/api/v1",
@@ -466,16 +465,16 @@ func TestLLMProviders(t *testing.T) {
 	assert.Equal(t, "model-a", models[0].Name)
 	assert.Equal(t, int64(1), models[1].IsDefault)
 
-	def, err := s.GetDefaultLLMProvider(ctx, 1)
+	def, err := s.GetDefaultLLMProvider(ctx)
 	require.NoError(t, err)
 	assert.Equal(t, created.ID, def.ID)
 
 	second, err := s.CreateLLMProvider(ctx, db.CreateLLMProviderParams{
-		UserID: 1, Name: "Ollama", Provider: "openai", BaseUrl: "http://localhost:11434/v1", ApiKey: "ollama",
+		Name: "Ollama", Provider: "openai", BaseUrl: "http://localhost:11434/v1", ApiKey: "ollama",
 	})
 	require.NoError(t, err)
 
-	require.NoError(t, s.ClearDefaultLLMProviders(ctx, 1))
+	require.NoError(t, s.ClearDefaultLLMProviders(ctx))
 	updated, err := s.UpdateLLMProvider(ctx, db.UpdateLLMProviderParams{
 		Name: "Ollama", Provider: "openai", BaseUrl: "http://localhost:11434/v1", ApiKey: "ollama",
 		IsDefault: 1, ID: second.ID,
@@ -483,11 +482,11 @@ func TestLLMProviders(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), updated.IsDefault)
 
-	def, err = s.GetDefaultLLMProvider(ctx, 1)
+	def, err = s.GetDefaultLLMProvider(ctx)
 	require.NoError(t, err)
 	assert.Equal(t, second.ID, def.ID)
 
-	list, err := s.ListLLMProvidersByUser(ctx, 1)
+	list, err := s.ListLLMProviders(ctx)
 	require.NoError(t, err)
 	assert.Len(t, list, 2)
 
@@ -501,23 +500,64 @@ func TestLLMProviders(t *testing.T) {
 	require.ErrorIs(t, err, sql.ErrNoRows)
 }
 
-func TestLLMProviderUniqueNamePerUser(t *testing.T) {
+func TestLLMProviderUniqueName(t *testing.T) {
 	s, dbConn := openStore(t)
 	ctx := t.Context()
 	seedUser(t, dbConn, 1)
-	seedUser(t, dbConn, 2)
 
 	params := db.CreateLLMProviderParams{
-		UserID: 1, Name: "main", Provider: "openai", BaseUrl: "https://api.example.com/v1", ApiKey: "sk-test",
+		Name: "main", Provider: "openai", BaseUrl: "https://api.example.com/v1", ApiKey: "sk-test",
 	}
 	_, err := s.CreateLLMProvider(ctx, params)
 	require.NoError(t, err)
 
+	// Names are globally unique across the instance.
 	_, err = s.CreateLLMProvider(ctx, params)
 	require.Error(t, err)
+}
 
-	// The same name is allowed for a different user.
-	params.UserID = 2
-	_, err = s.CreateLLMProvider(ctx, params)
+func TestUserLLMPrefs(t *testing.T) {
+	s, dbConn := openStore(t)
+	ctx := t.Context()
+	seedUser(t, dbConn, 1)
+
+	_, err := s.GetUserLLMPrefs(ctx, 1)
+	require.ErrorIs(t, err, sql.ErrNoRows)
+
+	created, err := s.CreateLLMProvider(ctx, db.CreateLLMProviderParams{
+		Name: "main", Provider: "openai", BaseUrl: "https://api.example.com/v1", ApiKey: "sk-test",
+	})
 	require.NoError(t, err)
+
+	pref, err := s.UpsertUserLLMPrefs(ctx, db.UpsertUserLLMPrefsParams{
+		UserID:     1,
+		ProviderID: sql.NullInt64{Int64: created.ID, Valid: true},
+		Model:      "model-a",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, created.ID, pref.ProviderID.Int64)
+	assert.Equal(t, "model-a", pref.Model)
+
+	pref, err = s.UpsertUserLLMPrefs(ctx, db.UpsertUserLLMPrefsParams{
+		UserID:     1,
+		ProviderID: sql.NullInt64{Int64: created.ID, Valid: true},
+		Model:      "model-b",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "model-b", pref.Model)
+
+	got, err := s.GetUserLLMPrefs(ctx, 1)
+	require.NoError(t, err)
+	assert.Equal(t, "model-b", got.Model)
+
+	// Deleting the provider leaves the pref behind with a NULL provider_id
+	// (ON DELETE SET NULL) so it falls back to the global default.
+	require.NoError(t, s.DeleteLLMProvider(ctx, created.ID))
+	got, err = s.GetUserLLMPrefs(ctx, 1)
+	require.NoError(t, err)
+	assert.False(t, got.ProviderID.Valid)
+
+	require.NoError(t, s.DeleteUserLLMPrefs(ctx, 1))
+	_, err = s.GetUserLLMPrefs(ctx, 1)
+	require.ErrorIs(t, err, sql.ErrNoRows)
 }

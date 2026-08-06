@@ -75,6 +75,6 @@ Go style: `cmd/` per binary, private code under `internal/` grouped by feature. 
 - [x] Step 10b: Multi-user hardening (admin-managed users, session APIs)
 - [x] Step 10c: Deploy (Docker, adapter-node)
 - [x] Step 11: Per-user LLM settings (provider/key/model in DB, per-request model override)
-- [x] Step 12: Multi-provider profiles (named gateways, per-profile model lists, chat picker)
+- [x] Step 12: Global admin-managed provider profiles (named gateways, per-profile model lists, per-user default preference, chat picker)
 
 Rationale for these choices lives in `docs/decisions.md`.

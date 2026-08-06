@@ -1,6 +1,6 @@
 -- name: CreateLLMProvider :one
-INSERT INTO llm_providers (user_id, name, provider, base_url, api_key, is_default)
-VALUES (?, ?, ?, ?, ?, ?)
+INSERT INTO llm_providers (name, provider, base_url, api_key, is_default)
+VALUES (?, ?, ?, ?, ?)
 RETURNING *;
 
 -- name: GetLLMProvider :one
@@ -8,16 +8,15 @@ SELECT *
 FROM llm_providers
 WHERE id = ?;
 
--- name: ListLLMProvidersByUser :many
+-- name: ListLLMProviders :many
 SELECT *
 FROM llm_providers
-WHERE user_id = ?
 ORDER BY id;
 
 -- name: GetDefaultLLMProvider :one
 SELECT *
 FROM llm_providers
-WHERE user_id = ? AND is_default = 1;
+WHERE is_default = 1;
 
 -- name: UpdateLLMProvider :one
 UPDATE llm_providers
@@ -28,7 +27,7 @@ RETURNING *;
 -- name: ClearDefaultLLMProviders :exec
 UPDATE llm_providers
 SET is_default = 0
-WHERE user_id = ? AND is_default = 1;
+WHERE is_default = 1;
 
 -- name: DeleteLLMProvider :exec
 DELETE FROM llm_providers

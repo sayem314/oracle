@@ -343,6 +343,33 @@ export async function deleteLLMProvider(id: number): Promise<void> {
   await deleteRequest(`/api/v1/llm/providers/${id}`);
 }
 
+export interface LLMPrefs {
+  provider_id: number | null;
+  model: string;
+}
+
+export async function getLLMPrefs(): Promise<LLMPrefs> {
+  const res = await getRequest("/api/v1/llm/prefs");
+  return (await res.json()) as LLMPrefs;
+}
+
+export async function setLLMPrefs(providerId: number, model?: string): Promise<LLMPrefs> {
+  const res = await fetch("/api/v1/llm/prefs", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ provider_id: providerId, model: model ?? "" }),
+    credentials: "include",
+  });
+  if (!res.ok) {
+    throw new Error(await parseError(res));
+  }
+  return (await res.json()) as LLMPrefs;
+}
+
+export async function clearLLMPrefs(): Promise<LLMPrefs> {
+  return setLLMPrefs(0);
+}
+
 export interface AdminUser {
   id: number;
   email: string;

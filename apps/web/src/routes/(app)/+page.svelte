@@ -6,9 +6,13 @@
     listSessions,
     listSessionMessages,
     listLLMProviders,
+    getLLMPrefs,
+    setLLMPrefs,
+    clearLLMPrefs,
     renameSession,
     deleteSession,
     type ChatStreamCallbacks,
+    type LLMPrefs,
     type LLMProvider,
     type SessionInfo,
   } from "$lib/api";
@@ -32,6 +36,7 @@
   let input = $state("");
   let selection = $state("");
   let providers = $state<LLMProvider[]>([]);
+  let prefs = $state<LLMPrefs>({ provider_id: null, model: "" });
   let streaming = $state(false);
   let streamingContent = $state("");
   let error = $state("");
@@ -49,6 +54,7 @@
   onMount(() => {
     void refreshSessions();
     void refreshProviders();
+    void refreshPrefs();
   });
 
   async function refreshProviders() {
@@ -56,6 +62,40 @@
       providers = await listLLMProviders();
     } catch {
       // A failed provider load should not block chatting.
+    }
+  }
+
+  async function refreshPrefs() {
+    try {
+      prefs = await getLLMPrefs();
+    } catch {
+      // A failed prefs load should not block chatting.
+    }
+  }
+
+  let prefLabel = $derived.by(() => {
+    if (!prefs.provider_id) return "";
+    const p = providers.find((x) => x.id === prefs.provider_id);
+    if (!p) return "a removed provider";
+    return `${p.name} · ${prefs.model || p.default_model || "provider default"}`;
+  });
+
+  async function saveDefault() {
+    const [providerId, model] = parseSelection(selection);
+    if (!providerId) return;
+    try {
+      prefs = await setLLMPrefs(providerId, model);
+      selection = "";
+    } catch (err) {
+      error = err instanceof Error ? err.message : "failed to save default";
+    }
+  }
+
+  async function clearDefault() {
+    try {
+      prefs = await clearLLMPrefs();
+    } catch (err) {
+      error = err instanceof Error ? err.message : "failed to clear default";
     }
   }
 
@@ -405,16 +445,37 @@
           <button type="submit" class="send" disabled={streaming || awaitingApproval || !input.trim()}>Send</button>
         </div>
         {#if providers.length > 0}
-          <select class="model-picker" bind:value={selection} disabled={streaming || awaitingApproval}>
-            <option value="">Default provider &amp; model</option>
-            {#each providers as p (p.id)}
-              <optgroup label={p.name}>
-                {#each p.models as m (m)}
-                  <option value={`${p.id}:${m}`}>{m}{m === p.default_model ? " (default)" : ""}</option>
-                {/each}
-              </optgroup>
-            {/each}
-          </select>
+          <div class="picker-row">
+            <select class="model-picker" bind:value={selection} disabled={streaming || awaitingApproval}>
+              <option value="">
+                {prefs.provider_id ? "My default provider &amp; model" : "Default provider &amp; model"}
+              </option>
+              {#each providers as p (p.id)}
+                <optgroup label={p.name}>
+                  {#each p.models as m (m)}
+                    <option value={`${p.id}:${m}`}>{m}{m === p.default_model ? " (default)" : ""}</option>
+                  {/each}
+                </optgroup>
+              {/each}
+            </select>
+            {#if selection}
+              <button class="picker-action" disabled={streaming || awaitingApproval} onclick={() => void saveDefault()}
+                >Set as my default</button
+              >
+            {/if}
+            {#if prefs.provider_id}
+              <span class="pref-hint">
+                Default: {prefLabel}
+                <button
+                  class="picker-action"
+                  disabled={streaming || awaitingApproval}
+                  onclick={() => void clearDefault()}
+                >
+                  clear
+                </button>
+              </span>
+            {/if}
+          </div>
         {/if}
       </form>
     </div>
@@ -689,7 +750,6 @@
   }
 
   .model-picker {
-    align-self: flex-start;
     background: var(--bg-input);
     border: 1px solid var(--border);
     border-radius: 10px;
@@ -698,6 +758,36 @@
     color: var(--text);
     outline: none;
     max-width: 100%;
+  }
+
+  .picker-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .picker-action {
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 4px 10px;
+    font-size: 12px;
+    color: var(--text);
+  }
+
+  .picker-action:hover {
+    border-color: var(--accent);
+  }
+
+  .picker-action:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+
+  .pref-hint {
+    font-size: 12px;
+    color: var(--text-dim);
   }
 
   .model-picker:focus {

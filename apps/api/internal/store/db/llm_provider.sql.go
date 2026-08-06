@@ -12,22 +12,21 @@ import (
 const clearDefaultLLMProviders = `-- name: ClearDefaultLLMProviders :exec
 UPDATE llm_providers
 SET is_default = 0
-WHERE user_id = ? AND is_default = 1
+WHERE is_default = 1
 `
 
-func (q *Queries) ClearDefaultLLMProviders(ctx context.Context, userID int64) error {
-	_, err := q.db.ExecContext(ctx, clearDefaultLLMProviders, userID)
+func (q *Queries) ClearDefaultLLMProviders(ctx context.Context) error {
+	_, err := q.db.ExecContext(ctx, clearDefaultLLMProviders)
 	return err
 }
 
 const createLLMProvider = `-- name: CreateLLMProvider :one
-INSERT INTO llm_providers (user_id, name, provider, base_url, api_key, is_default)
-VALUES (?, ?, ?, ?, ?, ?)
-RETURNING id, user_id, name, provider, base_url, api_key, is_default, created_at, updated_at
+INSERT INTO llm_providers (name, provider, base_url, api_key, is_default)
+VALUES (?, ?, ?, ?, ?)
+RETURNING id, name, provider, base_url, api_key, is_default, created_at, updated_at
 `
 
 type CreateLLMProviderParams struct {
-	UserID    int64
 	Name      string
 	Provider  string
 	BaseUrl   string
@@ -37,7 +36,6 @@ type CreateLLMProviderParams struct {
 
 func (q *Queries) CreateLLMProvider(ctx context.Context, arg CreateLLMProviderParams) (LlmProvider, error) {
 	row := q.db.QueryRowContext(ctx, createLLMProvider,
-		arg.UserID,
 		arg.Name,
 		arg.Provider,
 		arg.BaseUrl,
@@ -47,7 +45,6 @@ func (q *Queries) CreateLLMProvider(ctx context.Context, arg CreateLLMProviderPa
 	var i LlmProvider
 	err := row.Scan(
 		&i.ID,
-		&i.UserID,
 		&i.Name,
 		&i.Provider,
 		&i.BaseUrl,
@@ -80,17 +77,16 @@ func (q *Queries) DeleteLLMProvider(ctx context.Context, id int64) error {
 }
 
 const getDefaultLLMProvider = `-- name: GetDefaultLLMProvider :one
-SELECT id, user_id, name, provider, base_url, api_key, is_default, created_at, updated_at
+SELECT id, name, provider, base_url, api_key, is_default, created_at, updated_at
 FROM llm_providers
-WHERE user_id = ? AND is_default = 1
+WHERE is_default = 1
 `
 
-func (q *Queries) GetDefaultLLMProvider(ctx context.Context, userID int64) (LlmProvider, error) {
-	row := q.db.QueryRowContext(ctx, getDefaultLLMProvider, userID)
+func (q *Queries) GetDefaultLLMProvider(ctx context.Context) (LlmProvider, error) {
+	row := q.db.QueryRowContext(ctx, getDefaultLLMProvider)
 	var i LlmProvider
 	err := row.Scan(
 		&i.ID,
-		&i.UserID,
 		&i.Name,
 		&i.Provider,
 		&i.BaseUrl,
@@ -103,7 +99,7 @@ func (q *Queries) GetDefaultLLMProvider(ctx context.Context, userID int64) (LlmP
 }
 
 const getLLMProvider = `-- name: GetLLMProvider :one
-SELECT id, user_id, name, provider, base_url, api_key, is_default, created_at, updated_at
+SELECT id, name, provider, base_url, api_key, is_default, created_at, updated_at
 FROM llm_providers
 WHERE id = ?
 `
@@ -113,7 +109,6 @@ func (q *Queries) GetLLMProvider(ctx context.Context, id int64) (LlmProvider, er
 	var i LlmProvider
 	err := row.Scan(
 		&i.ID,
-		&i.UserID,
 		&i.Name,
 		&i.Provider,
 		&i.BaseUrl,
@@ -176,15 +171,14 @@ func (q *Queries) ListLLMModelsByProvider(ctx context.Context, providerID int64)
 	return items, nil
 }
 
-const listLLMProvidersByUser = `-- name: ListLLMProvidersByUser :many
-SELECT id, user_id, name, provider, base_url, api_key, is_default, created_at, updated_at
+const listLLMProviders = `-- name: ListLLMProviders :many
+SELECT id, name, provider, base_url, api_key, is_default, created_at, updated_at
 FROM llm_providers
-WHERE user_id = ?
 ORDER BY id
 `
 
-func (q *Queries) ListLLMProvidersByUser(ctx context.Context, userID int64) ([]LlmProvider, error) {
-	rows, err := q.db.QueryContext(ctx, listLLMProvidersByUser, userID)
+func (q *Queries) ListLLMProviders(ctx context.Context) ([]LlmProvider, error) {
+	rows, err := q.db.QueryContext(ctx, listLLMProviders)
 	if err != nil {
 		return nil, err
 	}
@@ -194,7 +188,6 @@ func (q *Queries) ListLLMProvidersByUser(ctx context.Context, userID int64) ([]L
 		var i LlmProvider
 		if err := rows.Scan(
 			&i.ID,
-			&i.UserID,
 			&i.Name,
 			&i.Provider,
 			&i.BaseUrl,
@@ -220,7 +213,7 @@ const updateLLMProvider = `-- name: UpdateLLMProvider :one
 UPDATE llm_providers
 SET name = ?, provider = ?, base_url = ?, api_key = ?, is_default = ?, updated_at = CURRENT_TIMESTAMP
 WHERE id = ?
-RETURNING id, user_id, name, provider, base_url, api_key, is_default, created_at, updated_at
+RETURNING id, name, provider, base_url, api_key, is_default, created_at, updated_at
 `
 
 type UpdateLLMProviderParams struct {
@@ -244,7 +237,6 @@ func (q *Queries) UpdateLLMProvider(ctx context.Context, arg UpdateLLMProviderPa
 	var i LlmProvider
 	err := row.Scan(
 		&i.ID,
-		&i.UserID,
 		&i.Name,
 		&i.Provider,
 		&i.BaseUrl,

@@ -184,7 +184,6 @@ func TestRunOnceUsesOwnerProvider(t *testing.T) {
 	seedUser(t, dbConn, 1)
 
 	provider, err := s.CreateLLMProvider(t.Context(), db.CreateLLMProviderParams{
-		UserID:    1,
 		Name:      "owner",
 		Provider:  "openai",
 		BaseUrl:   upstream.URL,

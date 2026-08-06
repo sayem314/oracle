@@ -63,7 +63,6 @@ type LlmModel struct {
 
 type LlmProvider struct {
 	ID        int64
-	UserID    int64
 	Name      string
 	Provider  string
 	BaseUrl   string
@@ -98,4 +97,11 @@ type ToolCall struct {
 	Result    string
 	Status    string
 	CreatedAt time.Time
+}
+
+type UserLlmPref struct {
+	UserID     int64
+	ProviderID sql.NullInt64
+	Model      string
+	UpdatedAt  time.Time
 }

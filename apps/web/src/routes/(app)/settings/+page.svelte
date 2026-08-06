@@ -8,6 +8,9 @@
     type LLMProvider,
   } from "$lib/api";
 
+  let { data } = $props<{ data: import("./$types").PageData }>();
+  let isAdmin = $derived(data.user?.role === "admin");
+
   let providers = $state<LLMProvider[]>([]);
   let loading = $state(true);
   let saving = $state(false);
@@ -33,7 +36,7 @@
   );
 
   onMount(() => {
-    void refresh();
+    if (isAdmin) void refresh();
   });
 
   async function refresh() {
@@ -132,118 +135,122 @@
 </script>
 
 <div class="settings">
-  <div class="column">
-    <div class="toolbar">
-      <h1>Settings</h1>
-      <button class="primary" type="button" onclick={startAdd}>Add provider</button>
-    </div>
+  {#if !isAdmin}
+    <div class="empty">Admin access required to manage providers.</div>
+  {:else}
+    <div class="column">
+      <div class="toolbar">
+        <h1>Settings</h1>
+        <button class="primary" type="button" onclick={startAdd}>Add provider</button>
+      </div>
 
-    {#if error}
-      <div class="error">{error}</div>
-    {/if}
-    {#if notice}
-      <div class="notice">{notice}</div>
-    {/if}
+      {#if error}
+        <div class="error">{error}</div>
+      {/if}
+      {#if notice}
+        <div class="notice">{notice}</div>
+      {/if}
 
-    {#if editingId !== null || (loading && providers.length === 0)}
-      <form
-        class="form"
-        onsubmit={(e) => {
-          e.preventDefault();
-          void submit();
-        }}
-      >
-        <h2>{editingId === null ? "New provider" : "Edit provider"}</h2>
-        <div class="field">
-          <label>
-            Name
-            <input type="text" bind:value={name} placeholder="e.g. OpenRouter, Ollama" />
-          </label>
-        </div>
-        <div class="field">
-          <label>
-            Base URL
-            <input type="url" bind:value={baseUrl} placeholder="https://api.openai.com/v1" />
-          </label>
-        </div>
-        <div class="field">
-          <label>
-            API key
-            <input
-              type="password"
-              bind:value={apiKey}
-              placeholder={editingId !== null && hasApiKey ? "Stored (leave blank to keep)" : "sk-..."}
-              autocomplete="off"
-            />
-          </label>
-        </div>
-        <div class="field">
-          <label>
-            Models (comma-separated)
-            <input type="text" bind:value={modelsText} placeholder="gpt-4o, gpt-4o-mini" />
-          </label>
-        </div>
-        {#if models.length > 0}
+      {#if editingId !== null || (loading && providers.length === 0)}
+        <form
+          class="form"
+          onsubmit={(e) => {
+            e.preventDefault();
+            void submit();
+          }}
+        >
+          <h2>{editingId === null ? "New provider" : "Edit provider"}</h2>
           <div class="field">
             <label>
-              Default model
-              <select bind:value={defaultModel}>
-                <option value="">None (choose per message)</option>
-                {#each models as m (m)}
-                  <option value={m}>{m}</option>
-                {/each}
-              </select>
+              Name
+              <input type="text" bind:value={name} placeholder="e.g. OpenRouter, Ollama" />
             </label>
           </div>
-        {/if}
-        <div class="actions">
-          <button type="button" class="ghost" onclick={startAdd}>Cancel</button>
-          <button class="primary" type="submit" disabled={saving || !canSave}>Save</button>
-        </div>
-      </form>
-    {/if}
-
-    {#if loading}
-      <div class="empty">Loading...</div>
-    {:else if providers.length === 0 && editingId === null}
-      <div class="empty">No providers yet. Add one to use your own LLM, or chat with the server default.</div>
-    {:else}
-      <div class="list">
-        {#each providers as p (p.id)}
-          <div class="provider">
-            <div class="provider-main">
-              <div class="provider-head">
-                <span class="provider-name">{p.name}</span>
-                {#if p.default}
-                  <span class="badge default">default</span>
-                {/if}
-                <span class="provider-meta">{p.base_url}</span>
-              </div>
-              {#if p.models.length > 0}
-                <div class="models">
-                  {#each p.models as m (m)}
-                    <span class="model" class:default-model={m === p.default_model}>
-                      {m}
-                      {#if m === p.default_model}•{/if}
-                    </span>
-                  {/each}
-                </div>
-              {:else}
-                <div class="provider-meta">No models configured</div>
-              {/if}
-            </div>
-            <div class="provider-actions">
-              {#if !p.default}
-                <button class="ghost" onclick={() => void makeDefault(p)}>Make default</button>
-              {/if}
-              <button class="ghost" onclick={() => startEdit(p)}>Edit</button>
-              <button class="delete" onclick={() => void remove(p)}>Delete</button>
-            </div>
+          <div class="field">
+            <label>
+              Base URL
+              <input type="url" bind:value={baseUrl} placeholder="https://api.openai.com/v1" />
+            </label>
           </div>
-        {/each}
-      </div>
-    {/if}
-  </div>
+          <div class="field">
+            <label>
+              API key
+              <input
+                type="password"
+                bind:value={apiKey}
+                placeholder={editingId !== null && hasApiKey ? "Stored (leave blank to keep)" : "sk-..."}
+                autocomplete="off"
+              />
+            </label>
+          </div>
+          <div class="field">
+            <label>
+              Models (comma-separated)
+              <input type="text" bind:value={modelsText} placeholder="gpt-4o, gpt-4o-mini" />
+            </label>
+          </div>
+          {#if models.length > 0}
+            <div class="field">
+              <label>
+                Default model
+                <select bind:value={defaultModel}>
+                  <option value="">None (choose per message)</option>
+                  {#each models as m (m)}
+                    <option value={m}>{m}</option>
+                  {/each}
+                </select>
+              </label>
+            </div>
+          {/if}
+          <div class="actions">
+            <button type="button" class="ghost" onclick={startAdd}>Cancel</button>
+            <button class="primary" type="submit" disabled={saving || !canSave}>Save</button>
+          </div>
+        </form>
+      {/if}
+
+      {#if loading}
+        <div class="empty">Loading...</div>
+      {:else if providers.length === 0 && editingId === null}
+        <div class="empty">No providers yet. Add one to use your own LLM, or chat with the server default.</div>
+      {:else}
+        <div class="list">
+          {#each providers as p (p.id)}
+            <div class="provider">
+              <div class="provider-main">
+                <div class="provider-head">
+                  <span class="provider-name">{p.name}</span>
+                  {#if p.default}
+                    <span class="badge default">default</span>
+                  {/if}
+                  <span class="provider-meta">{p.base_url}</span>
+                </div>
+                {#if p.models.length > 0}
+                  <div class="models">
+                    {#each p.models as m (m)}
+                      <span class="model" class:default-model={m === p.default_model}>
+                        {m}
+                        {#if m === p.default_model}•{/if}
+                      </span>
+                    {/each}
+                  </div>
+                {:else}
+                  <div class="provider-meta">No models configured</div>
+                {/if}
+              </div>
+              <div class="provider-actions">
+                {#if !p.default}
+                  <button class="ghost" onclick={() => void makeDefault(p)}>Make default</button>
+                {/if}
+                <button class="ghost" onclick={() => startEdit(p)}>Edit</button>
+                <button class="delete" onclick={() => void remove(p)}>Delete</button>
+              </div>
+            </div>
+          {/each}
+        </div>
+      {/if}
+    </div>
+  {/if}
 </div>
 
 <style>
