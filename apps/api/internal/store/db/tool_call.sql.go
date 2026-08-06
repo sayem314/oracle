@@ -24,17 +24,15 @@ func (q *Queries) CountPendingApprovalsBySession(ctx context.Context, sessionID 
 }
 
 const getToolCall = `-- name: GetToolCall :one
-SELECT tc.id, tc.message_id, tc.call_id, tc.name, tc.arguments, tc.result, tc.status, tc.created_at, m.session_id, s.user_id
+SELECT tc.id, tc.message_id, tc.call_id, tc.name, tc.arguments, tc.result, tc.status, tc.created_at, m.session_id
 FROM tool_calls tc
 JOIN messages m ON m.id = tc.message_id
-JOIN sessions s ON s.id = m.session_id
 WHERE tc.id = ?
 `
 
 type GetToolCallRow struct {
 	ToolCall  ToolCall
 	SessionID int64
-	UserID    int64
 }
 
 func (q *Queries) GetToolCall(ctx context.Context, id int64) (GetToolCallRow, error) {
@@ -50,7 +48,6 @@ func (q *Queries) GetToolCall(ctx context.Context, id int64) (GetToolCallRow, er
 		&i.ToolCall.Status,
 		&i.ToolCall.CreatedAt,
 		&i.SessionID,
-		&i.UserID,
 	)
 	return i, err
 }

@@ -47,6 +47,19 @@ async function patchJSON(path: string, payload: unknown): Promise<Response> {
   return res;
 }
 
+async function putJSON(path: string, payload: unknown): Promise<Response> {
+  const res = await fetch(path, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+    credentials: "include",
+  });
+  if (!res.ok) {
+    throw new Error(await parseError(res));
+  }
+  return res;
+}
+
 async function deleteRequest(path: string): Promise<void> {
   const res = await fetch(path, { method: "DELETE", credentials: "include" });
   if (!res.ok) {
@@ -127,7 +140,6 @@ export interface ChatOptions {
   sessionId: number | null;
   message: string;
   model?: string;
-  providerId?: number;
   signal?: AbortSignal;
 }
 
@@ -141,7 +153,6 @@ export async function streamChat(opts: ChatOptions, cb: ChatStreamCallbacks): Pr
       session_id: opts.sessionId,
       message: opts.message,
       model: opts.model,
-      provider_id: opts.providerId,
     }),
     credentials: "include",
     signal: opts.signal,
@@ -259,7 +270,6 @@ export interface Job {
   schedule: string;
   prompt: string;
   enabled: boolean;
-  provider_id: number | null;
   model: string;
   last_run_at: string | null;
   last_status: string;
@@ -272,7 +282,6 @@ export interface JobInput {
   schedule: string;
   prompt: string;
   session_id?: number;
-  provider_id?: number;
   model?: string;
 }
 
@@ -291,7 +300,7 @@ export async function createJob(input: JobInput): Promise<Job> {
 
 export async function updateJob(
   id: number,
-  patch: { schedule?: string; prompt?: string; enabled?: boolean; provider_id?: number; model?: string },
+  patch: { schedule?: string; prompt?: string; enabled?: boolean; model?: string },
 ): Promise<Job> {
   const res = await patchJSON(`/api/v1/jobs/${id}`, patch);
   return (await res.json()) as Job;
@@ -345,51 +354,38 @@ export async function deleteSession(id: number): Promise<void> {
 }
 
 export interface LLMProvider {
-  id: number;
-  name: string;
   provider: string;
   base_url: string;
   has_api_key: boolean;
-  models: string[];
-  default_model: string;
-  default: boolean;
+  model: string;
 }
 
 export interface LLMProviderInput {
-  name: string;
-  provider: string;
   base_url: string;
   api_key?: string;
-  models: string[];
-  default_model?: string;
-  default?: boolean;
+  model?: string;
 }
 
-export async function listLLMProviders(): Promise<LLMProvider[]> {
-  const res = await getRequest("/api/v1/llm/providers");
-  return (await res.json()) as LLMProvider[];
-}
-
-export async function createLLMProvider(input: LLMProviderInput): Promise<LLMProvider> {
-  const res = await postJSON("/api/v1/llm/providers", input);
+export async function getLLMProvider(): Promise<LLMProvider> {
+  const res = await getRequest("/api/v1/llm/provider");
   return (await res.json()) as LLMProvider;
 }
 
-export async function updateLLMProvider(id: number, input: LLMProviderInput): Promise<LLMProvider> {
-  const res = await patchJSON(`/api/v1/llm/providers/${id}`, input);
+// Admin-only. Leaving api_key blank keeps the stored key.
+export async function updateLLMProvider(input: LLMProviderInput): Promise<LLMProvider> {
+  const res = await putJSON("/api/v1/llm/provider", input);
   return (await res.json()) as LLMProvider;
 }
 
-export async function deleteLLMProvider(id: number): Promise<void> {
-  await deleteRequest(`/api/v1/llm/providers/${id}`);
+// Admin-only. Switches the active model instance-wide without resubmitting credentials.
+export async function setLLMModel(model: string): Promise<LLMProvider> {
+  const res = await putJSON("/api/v1/llm/provider/model", { model });
+  return (await res.json()) as LLMProvider;
 }
 
-// Asks the gateway for its available models (admin-only).
-export async function fetchProviderModels(id: number): Promise<string[]> {
-  const res = await fetch(`/api/v1/llm/providers/${id}/models`, {
-    method: "POST",
-    credentials: "include",
-  });
+// Admin-only. Asks the gateway for its available models.
+export async function fetchLLMModels(): Promise<string[]> {
+  const res = await fetch("/api/v1/llm/provider/fetch-models", { method: "POST", credentials: "include" });
   if (!res.ok) {
     throw new Error(await parseError(res));
   }
@@ -397,86 +393,35 @@ export async function fetchProviderModels(id: number): Promise<string[]> {
   return body.models;
 }
 
-export interface LLMPrefs {
-  provider_id: number | null;
-  model: string;
-}
-
-export async function getLLMPrefs(): Promise<LLMPrefs> {
-  const res = await getRequest("/api/v1/llm/prefs");
-  return (await res.json()) as LLMPrefs;
-}
-
-export async function setLLMPrefs(providerId: number, model?: string): Promise<LLMPrefs> {
-  const res = await fetch("/api/v1/llm/prefs", {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ provider_id: providerId, model: model ?? "" }),
-    credentials: "include",
-  });
-  if (!res.ok) {
-    throw new Error(await parseError(res));
-  }
-  return (await res.json()) as LLMPrefs;
-}
-
-export async function clearLLMPrefs(): Promise<LLMPrefs> {
-  return setLLMPrefs(0);
-}
-
-export interface AdminUser {
-  id: number;
-  email: string;
-  role: string;
-  created_at: string;
-  permission_default: string | null;
+export interface Settings {
+  permission_default: string;
   permission_rules: string;
 }
 
-export async function listUsers(): Promise<AdminUser[]> {
-  const res = await getRequest("/api/v1/users");
-  return (await res.json()) as AdminUser[];
+export interface SettingsInput {
+  permission_default: string;
+  permission_rules: string;
 }
 
-export async function createUser(email: string, password: string): Promise<AdminUser> {
-  const res = await postJSON("/api/v1/users", { email, password });
-  return (await res.json()) as AdminUser;
+// Admin-only.
+export async function getSettings(): Promise<Settings> {
+  const res = await getRequest("/api/v1/settings");
+  return (await res.json()) as Settings;
 }
 
-export async function deleteUser(id: number): Promise<void> {
-  await deleteRequest(`/api/v1/users/${id}`);
+// Admin-only. The default verdict and tool rules apply to every chat run.
+export async function updateSettings(input: SettingsInput): Promise<Settings> {
+  const res = await putJSON("/api/v1/settings", input);
+  return (await res.json()) as Settings;
 }
 
-// Admin-only: sets a new password for a user (revokes their other sessions).
-export async function resetUserPassword(id: number, password: string): Promise<AdminUser> {
-  const res = await postJSON(`/api/v1/users/${id}/reset-password`, { password });
-  return (await res.json()) as AdminUser;
+export interface Profile {
+  email: string;
+  role: string;
+  is_admin: boolean;
 }
 
-export interface UserPermissions {
-  default_verdict: string | null;
-  rules: string;
-}
-
-// Admin-only. A null default_verdict means the user inherits the global
-// ruleset; rules are appended after the global rules.
-export async function updateUserPermissions(
-  id: number,
-  defaultVerdict: string | null,
-  rules: string,
-): Promise<UserPermissions> {
-  const res = await fetch(`/api/v1/users/${id}/permissions`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ default_verdict: defaultVerdict, rules }),
-    credentials: "include",
-  });
-  if (!res.ok) {
-    throw new Error(await parseError(res));
-  }
-  return (await res.json()) as UserPermissions;
-}
-
-export async function clearUserPermissions(id: number): Promise<void> {
-  await deleteRequest(`/api/v1/users/${id}/permissions`);
+export async function getProfile(): Promise<Profile> {
+  const res = await getRequest("/api/v1/profile");
+  return (await res.json()) as Profile;
 }

@@ -30,15 +30,14 @@ func sessionToResponse(s db.Session) sessionResponse {
 	}
 }
 
-// resolveOwnedSession loads a session and verifies the caller owns it. A
-// missing or foreign session is a 404 so existence is never leaked.
-func resolveOwnedSession(deps Deps, c fiber.Ctx) (db.Session, error) {
+// resolveSession loads a session by path id or returns 404 so existence is
+// never leaked.
+func resolveSession(deps Deps, c fiber.Ctx) (db.Session, error) {
 	id, err := strconv.ParseInt(c.Params("id"), 10, 64)
 	if err != nil || id <= 0 {
 		return db.Session{}, fiber.NewError(fiber.StatusBadRequest, "invalid session id")
 	}
 
-	userID := c.Locals(userIDKey{}).(int64)
 	session, err := deps.Store.GetSession(c.Context(), id)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -46,17 +45,12 @@ func resolveOwnedSession(deps Deps, c fiber.Ctx) (db.Session, error) {
 		}
 		return db.Session{}, err
 	}
-	if session.UserID != userID {
-		return db.Session{}, fiber.NewError(fiber.StatusNotFound, "session not found")
-	}
 	return session, nil
 }
 
 func newListSessionsHandler(deps Deps) fiber.Handler {
 	return func(c fiber.Ctx) error {
-		userID := c.Locals(userIDKey{}).(int64)
 		sessions, err := deps.Store.ListSessions(c.Context(), db.ListSessionsParams{
-			UserID: userID,
 			Limit:  sessionListLimit,
 			Offset: 0,
 		})
@@ -90,7 +84,7 @@ type sessionMessageResponse struct {
 
 func newListMessagesHandler(deps Deps) fiber.Handler {
 	return func(c fiber.Ctx) error {
-		session, err := resolveOwnedSession(deps, c)
+		session, err := resolveSession(deps, c)
 		if err != nil {
 			return err
 		}
@@ -141,7 +135,7 @@ type updateSessionRequest struct {
 
 func newUpdateSessionHandler(deps Deps) fiber.Handler {
 	return func(c fiber.Ctx) error {
-		session, err := resolveOwnedSession(deps, c)
+		session, err := resolveSession(deps, c)
 		if err != nil {
 			return err
 		}
@@ -168,7 +162,7 @@ func newUpdateSessionHandler(deps Deps) fiber.Handler {
 
 func newDeleteSessionHandler(deps Deps) fiber.Handler {
 	return func(c fiber.Ctx) error {
-		session, err := resolveOwnedSession(deps, c)
+		session, err := resolveSession(deps, c)
 		if err != nil {
 			return err
 		}

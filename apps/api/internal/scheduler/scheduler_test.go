@@ -37,16 +37,6 @@ func newStore(t *testing.T) (store.Store, *sql.DB) {
 	return store.New(dbConn), dbConn
 }
 
-func seedUser(t *testing.T, dbConn *sql.DB, id int64) {
-	t.Helper()
-
-	_, err := dbConn.Exec(
-		"INSERT INTO auth_users (id, email) VALUES (?, ?)",
-		id, fmt.Sprintf("user%d@example.com", id),
-	)
-	require.NoError(t, err)
-}
-
 type fakeStream struct {
 	chunks []llm.Chunk
 	pos    int
@@ -88,11 +78,10 @@ func clockRegistry(t *testing.T) *tool.Registry {
 	return r
 }
 
-func createDueJob(t *testing.T, s store.Store, userID int64, schedule, prompt string, enabled int64) db.Job {
+func createDueJob(t *testing.T, s store.Store, schedule, prompt string, enabled int64) db.Job {
 	t.Helper()
 
 	job, err := s.CreateJob(t.Context(), db.CreateJobParams{
-		UserID:    userID,
 		Schedule:  schedule,
 		Prompt:    prompt,
 		Enabled:   enabled,
@@ -117,8 +106,7 @@ func TestNextAfter(t *testing.T) {
 }
 
 func TestRunOnceExecutesDueJob(t *testing.T) {
-	s, dbConn := newStore(t)
-	seedUser(t, dbConn, 1)
+	s, _ := newStore(t)
 
 	provider := &scriptedProvider{rounds: [][]llm.Chunk{
 		{{Delta: "good morning"}, {FinishReason: "stop"}},
@@ -132,7 +120,7 @@ func TestRunOnceExecutesDueJob(t *testing.T) {
 	}
 	sched := scheduler.New(s, engine, time.Minute)
 
-	job := createDueJob(t, s, 1, "0 8 * * *", "brief me", 1)
+	job := createDueJob(t, s, "0 8 * * *", "brief me", 1)
 
 	require.NoError(t, sched.RunOnce(t.Context()))
 
@@ -161,9 +149,9 @@ func TestRunOnceExecutesDueJob(t *testing.T) {
 	assert.Len(t, msgs, 2)
 }
 
-// TestRunOnceUsesOwnerProvider verifies headless runs resolve the job owner's
-// default LLM provider profile instead of the server default provider.
-func TestRunOnceUsesOwnerProvider(t *testing.T) {
+// TestRunOnceUsesGlobalProvider verifies headless runs resolve the singleton
+// global LLM provider profile instead of the server default provider.
+func TestRunOnceUsesGlobalProvider(t *testing.T) {
 	var gotAuth, gotModel string
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotAuth = r.Header.Get("Authorization")
@@ -180,22 +168,15 @@ func TestRunOnceUsesOwnerProvider(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	s, dbConn := newStore(t)
-	seedUser(t, dbConn, 1)
+	s, _ := newStore(t)
 
-	provider, err := s.CreateLLMProvider(t.Context(), db.CreateLLMProviderParams{
-		Name:      "owner",
-		Provider:  "openai",
-		BaseUrl:   upstream.URL,
-		ApiKey:    "sk-owner",
-		IsDefault: 1,
+	_, err := s.UpsertLLMProvider(t.Context(), db.UpsertLLMProviderParams{
+		Provider: "openai",
+		BaseUrl:  upstream.URL,
+		ApiKey:   "sk-global",
+		Model:    "global-model",
 	})
 	require.NoError(t, err)
-	require.NoError(t, s.InsertLLMModel(t.Context(), db.InsertLLMModelParams{
-		ProviderID: provider.ID,
-		Name:       "owner-model",
-		IsDefault:  1,
-	}))
 
 	engine := &chat.Engine{
 		Store:       s,
@@ -205,91 +186,39 @@ func TestRunOnceUsesOwnerProvider(t *testing.T) {
 		Headless:    true,
 	}
 	sched := scheduler.New(s, engine, time.Minute)
-	createDueJob(t, s, 1, "0 8 * * *", "brief me", 1)
+	createDueJob(t, s, "0 8 * * *", "brief me", 1)
 
 	require.NoError(t, sched.RunOnce(t.Context()))
 
-	assert.Equal(t, "Bearer sk-owner", gotAuth)
-	assert.Equal(t, "owner-model", gotModel)
+	assert.Equal(t, "Bearer sk-global", gotAuth)
+	assert.Equal(t, "global-model", gotModel)
 }
 
-// TestRunOnceHeadlessRespectsUserOverrides verifies a job owner's stored ask
-// verdict downgrades to deny in the unattended scheduler run.
-func TestRunOnceHeadlessRespectsUserOverrides(t *testing.T) {
-	s, dbConn := newStore(t)
-	seedUser(t, dbConn, 1)
-	_, err := dbConn.Exec("INSERT INTO user_permissions (user_id, default_verdict) VALUES (1, 'ask')")
-	require.NoError(t, err)
-
-	reg := tool.NewRegistry()
-	require.NoError(t, reg.Register(tool.Tool{
-		Definition: llm.Tool{Name: "clock", Description: "Return the current time."},
-		Execute:    func(_ context.Context, _ json.RawMessage) (string, error) { return "12:00", nil },
+// TestRunOnceUsesJobModel verifies a job pinned to a model wins over the
+// global provider's stored model during the headless run.
+func TestRunOnceUsesJobModel(t *testing.T) {
+	var gotModel string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Model string `json:"model"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		gotModel = body.Model
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"done\"},\"finish_reason\":null}]}\n\n"))
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n"))
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
 	}))
+	defer upstream.Close()
 
-	provider := &scriptedProvider{rounds: [][]llm.Chunk{
-		{{FinishReason: "tool_calls", ToolCalls: []llm.ToolCall{{ID: "call_1", Name: "clock", Arguments: "{}"}}}},
-		{{Delta: "done"}, {FinishReason: "stop"}},
-	}}
-	engine := &chat.Engine{
-		Store:              s,
-		LLM:                &chat.LLMResolver{Store: s, Default: provider},
-		Tools:              reg,
-		Permissions:        permission.NewRuleset(permission.Allow, nil),
-		PermissionResolver: &chat.PermissionOverlay{Store: s},
-		Headless:           true,
-	}
-	sched := scheduler.New(s, engine, time.Minute)
-	job := createDueJob(t, s, 1, "0 8 * * *", "what time", 1)
-
-	require.NoError(t, sched.RunOnce(t.Context()))
-
-	got, err := s.GetJob(t.Context(), job.ID)
+	s, _ := newStore(t)
+	_, err := s.UpsertLLMProvider(t.Context(), db.UpsertLLMProviderParams{
+		Provider: "openai",
+		BaseUrl:  upstream.URL,
+		ApiKey:   "sk-global",
+		Model:    "global-model",
+	})
 	require.NoError(t, err)
-	assert.Equal(t, "ok", got.LastStatus)
-
-	var status string
-	require.NoError(t, dbConn.QueryRow(
-		"SELECT status FROM tool_calls WHERE id = (SELECT MIN(id) FROM tool_calls)").Scan(&status))
-	assert.Equal(t, "denied", status)
-}
-
-// TestRunOnceUsesJobProvider verifies a job pinned to a provider/model wins
-// over the owner's default resolution.
-func TestRunOnceUsesJobProvider(t *testing.T) {
-	var defaultAuth, defaultModel, pinnedAuth, pinnedModel string
-	newUpstream := func(auth, model *string) *httptest.Server {
-		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			*auth = r.Header.Get("Authorization")
-			var body struct {
-				Model string `json:"model"`
-			}
-			_ = json.NewDecoder(r.Body).Decode(&body)
-			*model = body.Model
-			w.Header().Set("Content-Type", "text/event-stream")
-			_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"done\"},\"finish_reason\":null}]}\n\n"))
-			_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n"))
-			_, _ = w.Write([]byte("data: [DONE]\n\n"))
-		}))
-	}
-	defaultUpstream := newUpstream(&defaultAuth, &defaultModel)
-	defer defaultUpstream.Close()
-	pinnedUpstream := newUpstream(&pinnedAuth, &pinnedModel)
-	defer pinnedUpstream.Close()
-
-	s, dbConn := newStore(t)
-	seedUser(t, dbConn, 1)
-
-	seedProvider := func(name, baseURL string, isDefault int64) int64 {
-		t.Helper()
-		provider, err := s.CreateLLMProvider(t.Context(), db.CreateLLMProviderParams{
-			Name: name, Provider: "openai", BaseUrl: baseURL, ApiKey: "sk-" + name, IsDefault: isDefault,
-		})
-		require.NoError(t, err)
-		return provider.ID
-	}
-	seedProvider("default", defaultUpstream.URL, 1)
-	pinnedID := seedProvider("pinned", pinnedUpstream.URL, 0)
 
 	engine := &chat.Engine{
 		Store:       s,
@@ -300,27 +229,22 @@ func TestRunOnceUsesJobProvider(t *testing.T) {
 	}
 	sched := scheduler.New(s, engine, time.Minute)
 
-	_, err := s.CreateJob(t.Context(), db.CreateJobParams{
-		UserID:     1,
-		Schedule:   "0 8 * * *",
-		Prompt:     "brief me",
-		Enabled:    1,
-		NextRunAt:  sql.NullTime{Time: time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC), Valid: true},
-		ProviderID: sql.NullInt64{Int64: pinnedID, Valid: true},
-		Model:      "pinned-model",
+	_, err = s.CreateJob(t.Context(), db.CreateJobParams{
+		Schedule:  "0 8 * * *",
+		Prompt:    "brief me",
+		Enabled:   1,
+		NextRunAt: sql.NullTime{Time: time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC), Valid: true},
+		Model:     "pinned-model",
 	})
 	require.NoError(t, err)
 
 	require.NoError(t, sched.RunOnce(t.Context()))
 
-	assert.Empty(t, defaultAuth)
-	assert.Equal(t, "Bearer sk-pinned", pinnedAuth)
-	assert.Equal(t, "pinned-model", pinnedModel)
+	assert.Equal(t, "pinned-model", gotModel)
 }
 
 func TestRunOnceSkipsDisabledAndFutureJobs(t *testing.T) {
-	s, dbConn := newStore(t)
-	seedUser(t, dbConn, 1)
+	s, _ := newStore(t)
 
 	provider := &scriptedProvider{rounds: [][]llm.Chunk{}}
 	engine := &chat.Engine{
@@ -332,10 +256,9 @@ func TestRunOnceSkipsDisabledAndFutureJobs(t *testing.T) {
 	}
 	sched := scheduler.New(s, engine, time.Minute)
 
-	disabled := createDueJob(t, s, 1, "0 8 * * *", "disabled job", 0)
+	disabled := createDueJob(t, s, "0 8 * * *", "disabled job", 0)
 
 	future, err := s.CreateJob(t.Context(), db.CreateJobParams{
-		UserID:    1,
 		Schedule:  "0 8 * * *",
 		Prompt:    "future job",
 		Enabled:   1,
@@ -356,8 +279,7 @@ func TestRunOnceSkipsDisabledAndFutureJobs(t *testing.T) {
 }
 
 func TestRunOnceHeadlessAskDeniesTool(t *testing.T) {
-	s, dbConn := newStore(t)
-	seedUser(t, dbConn, 1)
+	s, _ := newStore(t)
 
 	provider := &scriptedProvider{rounds: [][]llm.Chunk{
 		{{FinishReason: "tool_calls", ToolCalls: []llm.ToolCall{{ID: "call_1", Name: "clock", Arguments: "{}"}}}},
@@ -372,7 +294,7 @@ func TestRunOnceHeadlessAskDeniesTool(t *testing.T) {
 	}
 	sched := scheduler.New(s, engine, time.Minute)
 
-	job := createDueJob(t, s, 1, "0 8 * * *", "what time is it", 1)
+	job := createDueJob(t, s, "0 8 * * *", "what time is it", 1)
 
 	require.NoError(t, sched.RunOnce(t.Context()))
 
@@ -395,8 +317,7 @@ func TestRunOnceHeadlessAskDeniesTool(t *testing.T) {
 }
 
 func TestRunOnceRecordsProviderError(t *testing.T) {
-	s, dbConn := newStore(t)
-	seedUser(t, dbConn, 1)
+	s, _ := newStore(t)
 
 	engine := &chat.Engine{
 		Store:       s,
@@ -407,7 +328,7 @@ func TestRunOnceRecordsProviderError(t *testing.T) {
 	}
 	sched := scheduler.New(s, engine, time.Minute)
 
-	job := createDueJob(t, s, 1, "0 8 * * *", "brief me", 1)
+	job := createDueJob(t, s, "0 8 * * *", "brief me", 1)
 
 	require.NoError(t, sched.RunOnce(t.Context()))
 
@@ -423,8 +344,7 @@ func (p *errorProvider) Chat(_ context.Context, _ llm.Request) (llm.Stream, erro
 }
 
 func TestStartStop(t *testing.T) {
-	s, dbConn := newStore(t)
-	seedUser(t, dbConn, 1)
+	s, _ := newStore(t)
 
 	engine := &chat.Engine{
 		Store:       s,

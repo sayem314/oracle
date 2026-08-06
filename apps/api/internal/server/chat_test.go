@@ -210,7 +210,7 @@ func decodeErrorMessage(t *testing.T, res *http.Response) string {
 
 func TestChatNewSession(t *testing.T) {
 	app, s, dbConn := newTestApp(t, llm.NewMock())
-	cookie, userID := signUp(t, app, dbConn, "owner@example.com")
+	cookie, _ := signUp(t, app, dbConn, "owner@example.com")
 
 	res := postChat(t, app, cookie, map[string]any{"message": "hi"})
 	require.Equal(t, http.StatusOK, res.StatusCode)
@@ -242,10 +242,6 @@ func TestChatNewSession(t *testing.T) {
 
 	assert.Empty(t, framesByName(frames, "error"))
 
-	session, err := s.GetSession(t.Context(), start.SessionID)
-	require.NoError(t, err)
-	assert.Equal(t, userID, session.UserID)
-
 	messages, err := s.ListMessages(t.Context(), db.ListMessagesParams{SessionID: start.SessionID, Limit: 10})
 	require.NoError(t, err)
 	require.Len(t, messages, 2)
@@ -258,10 +254,10 @@ func TestChatStreamsHistoryToProvider(t *testing.T) {
 		{FinishReason: "stop"},
 	}}
 	app, s, dbConn := newTestApp(t, provider)
-	cookie, userID := signUp(t, app, dbConn, "owner@example.com")
+	cookie, _ := signUp(t, app, dbConn, "owner@example.com")
 
 	ctx := t.Context()
-	session, err := s.CreateSession(ctx, db.CreateSessionParams{UserID: userID})
+	session, err := s.CreateSession(ctx, "")
 	require.NoError(t, err)
 	_, err = s.AppendMessage(ctx, db.AppendMessageParams{SessionID: session.ID, Role: "user", Content: "hi"})
 	require.NoError(t, err)
@@ -497,73 +493,6 @@ func TestChatToolRoundLimit(t *testing.T) {
 	assert.Contains(t, chatErr.Message, "round limit")
 	assert.Empty(t, framesByName(frames, "done"))
 	assert.Len(t, framesByName(frames, "tool_calls"), 5)
-}
-
-func TestChatUserPermissionOverrides(t *testing.T) {
-	newApp := func(t *testing.T) (*fiber.App, string, int64, string) {
-		t.Helper()
-		provider := &fakeProvider{chunks: []llm.Chunk{
-			{FinishReason: "tool_calls", ToolCalls: []llm.ToolCall{{ID: "call_1", Name: "clock", Arguments: "{}"}}},
-			{Delta: "done"}, {FinishReason: "stop"},
-		}}
-		app, _, dbConn := newTestAppWithTools(t, provider, clockRegistry(t))
-		adminCookie, _ := signUp(t, app, dbConn, "admin@example.com")
-		res := doUsersRequest(t, app, http.MethodPost, "/api/v1/users", adminCookie, map[string]any{
-			"email":    "member@example.com",
-			"password": "Secure1pass",
-		})
-		require.Equal(t, http.StatusCreated, res.StatusCode)
-		member := decodeUser(t, res)
-		return app, adminCookie, member.ID, signIn(t, app, "member@example.com", "Secure1pass")
-	}
-
-	t.Run("per-user deny overrides the global allow", func(t *testing.T) {
-		app, adminCookie, memberID, memberCookie := newApp(t)
-
-		res := doUsersRequest(t, app, http.MethodPut, "/api/v1/users/"+itoa(memberID)+"/permissions", adminCookie, map[string]any{
-			"default_verdict": "deny",
-		})
-		require.Equal(t, http.StatusOK, res.StatusCode)
-
-		res = postChat(t, app, memberCookie, map[string]any{"message": "what time is it?"})
-		require.Equal(t, http.StatusOK, res.StatusCode)
-
-		results := framesByName(parseSSE(t, res.Body), "tool_result")
-		require.NotEmpty(t, results)
-		for _, f := range results {
-			var tr toolResultEvent
-			decodeFrame(t, f, &tr)
-			assert.Contains(t, tr.Result, "denied by policy")
-		}
-
-		// The admin has no row, so the global allow still applies.
-		res = postChat(t, app, adminCookie, map[string]any{"message": "what time is it?"})
-		require.Equal(t, http.StatusOK, res.StatusCode)
-
-		results = framesByName(parseSSE(t, res.Body), "tool_result")
-		require.NotEmpty(t, results)
-		for _, f := range results {
-			var tr toolResultEvent
-			decodeFrame(t, f, &tr)
-			assert.Equal(t, "12:00", tr.Result)
-		}
-	})
-
-	t.Run("per-user ask surfaces approval", func(t *testing.T) {
-		app, adminCookie, memberID, memberCookie := newApp(t)
-
-		res := doUsersRequest(t, app, http.MethodPut, "/api/v1/users/"+itoa(memberID)+"/permissions", adminCookie, map[string]any{
-			"default_verdict": "ask",
-		})
-		require.Equal(t, http.StatusOK, res.StatusCode)
-
-		res = postChat(t, app, memberCookie, map[string]any{"message": "what time is it?"})
-		require.Equal(t, http.StatusOK, res.StatusCode)
-
-		frames := parseSSE(t, res.Body)
-		require.Len(t, framesByName(frames, "approval_required"), 1)
-		require.Empty(t, framesByName(frames, "tool_result"))
-	})
 }
 
 func TestChatUnknownToolFeedsErrorBack(t *testing.T) {

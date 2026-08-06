@@ -1,11 +1,11 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import {
-    listLLMProviders,
-    createLLMProvider,
+    getLLMProvider,
     updateLLMProvider,
-    deleteLLMProvider,
-    fetchProviderModels,
+    fetchLLMModels,
+    getSettings,
+    updateSettings,
     changePassword,
     type LLMProvider,
   } from "$lib/api";
@@ -22,145 +22,101 @@
   let pwNotice = $state("");
   let pwValid = $derived(curPw !== "" && newPw.length >= 8 && newPw === confirmPw);
 
-  let providers = $state<LLMProvider[]>([]);
-  let loading = $state(true);
-  let saving = $state(false);
-  let error = $state("");
-  let notice = $state("");
-
-  let editingId = $state<number | null>(null);
-  let name = $state("");
+  let provider = $state<LLMProvider | null>(null);
   let baseUrl = $state("");
   let apiKey = $state("");
-  let modelsText = $state("");
-  let defaultModel = $state("");
-
-  let models = $derived(
-    modelsText
-      .split(",")
-      .map((m) => m.trim())
-      .filter((m, i, all) => m !== "" && all.indexOf(m) === i),
-  );
-  let hasApiKey = $derived(providers.find((p) => p.id === editingId)?.has_api_key ?? false);
-  let canSave = $derived(
-    name.trim() !== "" && baseUrl.trim() !== "" && (editingId === null || apiKey !== "" || hasApiKey),
-  );
+  let model = $state("");
+  let providerSaving = $state(false);
+  let hasApiKey = $state(false);
   let fetching = $state(false);
+  let pError = $state("");
+  let pNotice = $state("");
+
+  let permissionDefault = $state("ask");
+  let permissionRules = $state("");
+  let settingsSaving = $state(false);
+  let sError = $state("");
+  let sNotice = $state("");
+
+  let loading = $state(true);
+  let error = $state("");
 
   onMount(() => {
     if (isAdmin) void refresh();
   });
 
-  async function fetchModels() {
-    if (fetching || editingId === null) return;
-    fetching = true;
-    error = "";
-    try {
-      const fetched = await fetchProviderModels(editingId);
-      modelsText = fetched.join(", ");
-      if (defaultModel && !fetched.includes(defaultModel)) {
-        defaultModel = "";
-      }
-      notice =
-        fetched.length > 0 ? `Fetched ${fetched.length} models from the gateway.` : "The gateway returned no models.";
-    } catch (err) {
-      error = err instanceof Error ? err.message : "failed to fetch models";
-    } finally {
-      fetching = false;
-    }
-  }
-
   async function refresh() {
     error = "";
+    loading = true;
     try {
-      providers = await listLLMProviders();
+      const [p, s] = await Promise.all([getLLMProvider(), getSettings()]);
+      provider = p;
+      baseUrl = p.base_url;
+      model = p.model;
+      hasApiKey = p.has_api_key;
+      permissionDefault = s.permission_default;
+      permissionRules = s.permission_rules;
     } catch (err) {
-      error = err instanceof Error ? err.message : "failed to load providers";
+      error = err instanceof Error ? err.message : "failed to load settings";
     } finally {
       loading = false;
     }
   }
 
-  function startAdd() {
-    editingId = null;
-    name = "";
-    baseUrl = "";
-    apiKey = "";
-    modelsText = "";
-    defaultModel = "";
-    error = "";
-    notice = "";
-  }
-
-  function startEdit(p: LLMProvider) {
-    editingId = p.id;
-    name = p.name;
-    baseUrl = p.base_url;
-    apiKey = "";
-    modelsText = p.models.join(", ");
-    defaultModel = p.default_model;
-    error = "";
-    notice = "";
-  }
-
-  async function submit() {
-    if (saving || !canSave) return;
-    saving = true;
-    error = "";
-    notice = "";
-    const payload = {
-      name: name.trim(),
-      provider: "openai",
-      base_url: baseUrl.trim(),
-      api_key: apiKey.trim(),
-      models,
-      default_model: defaultModel || undefined,
-    };
+  async function fetchModels() {
+    if (fetching) return;
+    fetching = true;
+    pError = "";
+    pNotice = "";
     try {
-      if (editingId === null) {
-        await createLLMProvider(payload);
-      } else {
-        await updateLLMProvider(editingId, payload);
-      }
-      notice = editingId === null ? "Provider added." : "Provider updated.";
-      startAdd();
-      await refresh();
+      const fetched = await fetchLLMModels();
+      pNotice =
+        fetched.length > 0 ? `Fetched ${fetched.length} models from the gateway.` : "The gateway returned no models.";
     } catch (err) {
-      error = err instanceof Error ? err.message : "failed to save provider";
+      pError = err instanceof Error ? err.message : "failed to fetch models";
     } finally {
-      saving = false;
+      fetching = false;
     }
   }
 
-  async function makeDefault(p: LLMProvider) {
-    error = "";
-    notice = "";
+  async function saveProvider() {
+    if (providerSaving) return;
+    providerSaving = true;
+    pError = "";
+    pNotice = "";
     try {
-      await updateLLMProvider(p.id, {
-        name: p.name,
-        provider: p.provider,
-        base_url: p.base_url,
-        models: p.models,
-        default_model: p.default_model,
-        default: true,
+      const updated = await updateLLMProvider({
+        base_url: baseUrl.trim(),
+        api_key: apiKey.trim() || undefined,
+        model: model.trim() || undefined,
       });
-      notice = `${p.name} is now the default.`;
-      await refresh();
+      hasApiKey = updated.has_api_key;
+      apiKey = "";
+      pNotice = "Provider updated.";
     } catch (err) {
-      error = err instanceof Error ? err.message : "failed to set default";
+      pError = err instanceof Error ? err.message : "failed to save provider";
+    } finally {
+      providerSaving = false;
     }
   }
 
-  async function remove(p: LLMProvider) {
-    error = "";
-    notice = "";
+  async function saveSettings() {
+    if (settingsSaving) return;
+    settingsSaving = true;
+    sError = "";
+    sNotice = "";
     try {
-      await deleteLLMProvider(p.id);
-      if (editingId === p.id) startAdd();
-      notice = `Deleted ${p.name}.`;
-      await refresh();
+      const updated = await updateSettings({
+        permission_default: permissionDefault,
+        permission_rules: permissionRules,
+      });
+      permissionDefault = updated.permission_default;
+      permissionRules = updated.permission_rules;
+      sNotice = "Ruleset updated.";
     } catch (err) {
-      error = err instanceof Error ? err.message : "failed to delete provider";
+      sError = err instanceof Error ? err.message : "failed to save ruleset";
+    } finally {
+      settingsSaving = false;
     }
   }
 
@@ -186,39 +142,39 @@
 <div class="settings">
   <div class="column">
     {#if !isAdmin}
-      <div class="empty">Admin access required to manage providers.</div>
+      <div class="empty">Admin access required to manage settings.</div>
     {:else}
-      <div class="toolbar">
-        <h1>Settings</h1>
-        <button class="primary" type="button" onclick={startAdd}>Add provider</button>
-      </div>
-
       {#if error}
         <div class="error">{error}</div>
       {/if}
-      {#if notice}
-        <div class="notice">{notice}</div>
-      {/if}
 
-      {#if editingId !== null || (loading && providers.length === 0)}
+      {#if loading}
+        <div class="empty">Loading...</div>
+      {:else}
         <form
           class="form"
           onsubmit={(e) => {
             e.preventDefault();
-            void submit();
+            void saveProvider();
           }}
         >
-          <h2>{editingId === null ? "New provider" : "Edit provider"}</h2>
+          <h2>LLM provider</h2>
+          {#if pError}
+            <div class="error">{pError}</div>
+          {/if}
+          {#if pNotice}
+            <div class="notice">{pNotice}</div>
+          {/if}
           <div class="field">
             <label>
-              Name
-              <input type="text" bind:value={name} placeholder="e.g. OpenRouter, Ollama" />
+              Provider type
+              <input type="text" value={provider?.provider ?? ""} disabled />
             </label>
           </div>
           <div class="field">
             <label>
               Base URL
-              <input type="url" bind:value={baseUrl} placeholder="https://api.openai.com/v1" />
+              <input type="url" bind:value={baseUrl} placeholder="https://api.openai.com/v1" required />
             </label>
           </div>
           <div class="field">
@@ -227,81 +183,59 @@
               <input
                 type="password"
                 bind:value={apiKey}
-                placeholder={editingId !== null && hasApiKey ? "Stored (leave blank to keep)" : "sk-..."}
+                placeholder={hasApiKey ? "Stored (leave blank to keep)" : "sk-..."}
                 autocomplete="off"
               />
             </label>
           </div>
           <div class="field">
             <label>
-              Models (comma-separated)
-              <input type="text" bind:value={modelsText} placeholder="gpt-4o, gpt-4o-mini" />
+              Active model
+              <input type="text" bind:value={model} placeholder="gpt-4o" />
             </label>
-            {#if editingId !== null}
-              <button type="button" class="ghost fetch" disabled={fetching} onclick={() => void fetchModels()}>
-                {fetching ? "Fetching..." : "Fetch from gateway"}
-              </button>
-            {/if}
+            <button type="button" class="ghost fetch" disabled={fetching} onclick={() => void fetchModels()}>
+              {fetching ? "Fetching..." : "Fetch model list"}
+            </button>
           </div>
-          {#if models.length > 0}
-            <div class="field">
-              <label>
-                Default model
-                <select bind:value={defaultModel}>
-                  <option value="">None (choose per message)</option>
-                  {#each models as m (m)}
-                    <option value={m}>{m}</option>
-                  {/each}
-                </select>
-              </label>
-            </div>
-          {/if}
           <div class="actions">
-            <button type="button" class="ghost" onclick={startAdd}>Cancel</button>
-            <button class="primary" type="submit" disabled={saving || !canSave}>Save</button>
+            <button class="primary" type="submit" disabled={providerSaving}>Save provider</button>
           </div>
         </form>
-      {/if}
 
-      {#if loading}
-        <div class="empty">Loading...</div>
-      {:else if providers.length === 0 && editingId === null}
-        <div class="empty">No providers yet. Add one to use your own LLM, or chat with the server default.</div>
-      {:else}
-        <div class="list">
-          {#each providers as p (p.id)}
-            <div class="provider">
-              <div class="provider-main">
-                <div class="provider-head">
-                  <span class="provider-name">{p.name}</span>
-                  {#if p.default}
-                    <span class="badge default">default</span>
-                  {/if}
-                  <span class="provider-meta">{p.base_url}</span>
-                </div>
-                {#if p.models.length > 0}
-                  <div class="models">
-                    {#each p.models as m (m)}
-                      <span class="model" class:default-model={m === p.default_model}>
-                        {m}
-                        {#if m === p.default_model}•{/if}
-                      </span>
-                    {/each}
-                  </div>
-                {:else}
-                  <div class="provider-meta">No models configured</div>
-                {/if}
-              </div>
-              <div class="provider-actions">
-                {#if !p.default}
-                  <button class="ghost" onclick={() => void makeDefault(p)}>Make default</button>
-                {/if}
-                <button class="ghost" onclick={() => startEdit(p)}>Edit</button>
-                <button class="delete" onclick={() => void remove(p)}>Delete</button>
-              </div>
-            </div>
-          {/each}
-        </div>
+        <form
+          class="form"
+          onsubmit={(e) => {
+            e.preventDefault();
+            void saveSettings();
+          }}
+        >
+          <h2>Tool permissions</h2>
+          {#if sError}
+            <div class="error">{sError}</div>
+          {/if}
+          {#if sNotice}
+            <div class="notice">{sNotice}</div>
+          {/if}
+          <div class="field">
+            <label>
+              Default verdict
+              <select bind:value={permissionDefault}>
+                <option value="allow">Allow by default</option>
+                <option value="ask">Ask before running</option>
+                <option value="deny">Deny by default</option>
+              </select>
+            </label>
+          </div>
+          <div class="field">
+            <label>
+              Rules (name=allow, name=deny, one per line)
+              <textarea bind:value={permissionRules} rows="6" placeholder="net.file_read=ask"></textarea>
+            </label>
+          </div>
+          <div class="actions">
+            <button class="primary" type="submit" disabled={settingsSaving}>Save ruleset</button>
+          </div>
+        </form>
       {/if}
     {/if}
 
@@ -369,17 +303,6 @@
     gap: 16px;
   }
 
-  .toolbar {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-  }
-
-  h1 {
-    font-size: 20px;
-    margin: 0;
-  }
-
   h2 {
     font-size: 15px;
     margin: 0;
@@ -404,17 +327,21 @@
   }
 
   .field input,
-  .field select {
+  .field select,
+  .field textarea {
     background: var(--bg-input);
     border: 1px solid var(--border);
     border-radius: var(--radius);
     padding: 10px 12px;
     outline: none;
     color: var(--text);
+    font-family: inherit;
+    resize: vertical;
   }
 
   .field input:focus,
-  .field select:focus {
+  .field select:focus,
+  .field textarea:focus {
     border-color: var(--accent);
   }
 
@@ -458,101 +385,6 @@
 
   button.ghost:hover {
     border-color: var(--accent);
-  }
-
-  .list {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-  }
-
-  .provider {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    background: var(--bg-raised);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 12px 14px;
-  }
-
-  .provider-main {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-  }
-
-  .provider-head {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    flex-wrap: wrap;
-  }
-
-  .provider-name {
-    font-weight: 600;
-  }
-
-  .badge {
-    font-size: 12px;
-    padding: 2px 8px;
-    border-radius: 999px;
-    border: 1px solid var(--border);
-    color: var(--text-dim);
-  }
-
-  .badge.default {
-    color: var(--accent);
-    border-color: var(--accent);
-  }
-
-  .provider-meta {
-    font-size: 12px;
-    color: var(--text-dim);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .models {
-    display: flex;
-    gap: 6px;
-    flex-wrap: wrap;
-  }
-
-  .model {
-    font-size: 12px;
-    padding: 2px 8px;
-    border-radius: 999px;
-    border: 1px solid var(--border);
-    color: var(--text-dim);
-  }
-
-  .model.default-model {
-    color: var(--accent);
-    border-color: var(--accent);
-  }
-
-  .provider-actions {
-    display: flex;
-    gap: 8px;
-    flex-wrap: wrap;
-    justify-content: flex-end;
-  }
-
-  button.delete {
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    background: var(--bg-input);
-    color: var(--danger);
-    padding: 6px 12px;
-    font-size: 13px;
-  }
-
-  button.delete:hover {
-    border-color: var(--danger);
   }
 
   .error {

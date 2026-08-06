@@ -42,7 +42,6 @@ type AuthVerification struct {
 
 type Job struct {
 	ID         int64
-	UserID     int64
 	SessionID  sql.NullInt64
 	Schedule   string
 	Prompt     string
@@ -50,27 +49,17 @@ type Job struct {
 	LastRunAt  sql.NullTime
 	LastStatus string
 	NextRunAt  sql.NullTime
-	ProviderID sql.NullInt64
 	Model      string
 	CreatedAt  time.Time
 	UpdatedAt  time.Time
 }
 
-type LlmModel struct {
-	ID         int64
-	ProviderID int64
-	Name       string
-	IsDefault  int64
-}
-
 type LlmProvider struct {
 	ID        int64
-	Name      string
 	Provider  string
 	BaseUrl   string
 	ApiKey    string
-	IsDefault int64
-	CreatedAt time.Time
+	Model     string
 	UpdatedAt time.Time
 }
 
@@ -84,11 +73,17 @@ type Message struct {
 
 type Session struct {
 	ID        int64
-	UserID    int64
 	Title     string
 	Summary   string
 	CreatedAt time.Time
 	UpdatedAt time.Time
+}
+
+type Setting struct {
+	ID                int64
+	PermissionDefault string
+	PermissionRules   string
+	UpdatedAt         time.Time
 }
 
 type ToolCall struct {
@@ -100,18 +95,4 @@ type ToolCall struct {
 	Result    string
 	Status    string
 	CreatedAt time.Time
-}
-
-type UserLlmPref struct {
-	UserID     int64
-	ProviderID sql.NullInt64
-	Model      string
-	UpdatedAt  time.Time
-}
-
-type UserPermission struct {
-	UserID         int64
-	DefaultVerdict sql.NullString
-	Rules          string
-	UpdatedAt      time.Time
 }

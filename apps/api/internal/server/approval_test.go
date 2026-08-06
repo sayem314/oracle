@@ -307,25 +307,3 @@ func TestApprovalValidationAndOwnership(t *testing.T) {
 		assert.Equal(t, "tool call is not awaiting approval", decodeErrorMessage(t, res))
 	})
 }
-
-func TestApprovalOtherUsersToolCall(t *testing.T) {
-	app, s, dbConn := newTestAppFull(t, llm.NewMock(), clockRegistry(t), askAll)
-	intruderCookie, _ := signUp(t, app, dbConn, "intruder@example.com")
-	seedUser(t, dbConn, 42)
-
-	ctx := t.Context()
-	session, err := s.CreateSession(ctx, db.CreateSessionParams{UserID: 42})
-	require.NoError(t, err)
-	msg, err := s.AppendMessage(ctx, db.AppendMessageParams{SessionID: session.ID, Role: "assistant"})
-	require.NoError(t, err)
-	call, err := s.InsertToolCall(ctx, db.InsertToolCallParams{
-		MessageID: msg.ID,
-		CallID:    "call_1",
-		Name:      "clock",
-		Status:    "awaiting_approval",
-	})
-	require.NoError(t, err)
-
-	res := postApproval(t, app, intruderCookie, map[string]any{"id": call.ID, "decision": "approve"})
-	assert.Equal(t, http.StatusNotFound, res.StatusCode)
-}

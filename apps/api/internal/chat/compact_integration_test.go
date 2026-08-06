@@ -17,7 +17,7 @@ import (
 // fixedResolver hands every run the same provider.
 type fixedResolver struct{ p llm.Provider }
 
-func (f fixedResolver) Resolve(ctx context.Context, userID, providerID int64, model string) (llm.Provider, error) {
+func (f fixedResolver) Resolve(ctx context.Context, model string) (llm.Provider, error) {
 	return f.p, nil
 }
 
@@ -25,10 +25,9 @@ func (f fixedResolver) Resolve(ctx context.Context, userID, providerID int64, mo
 // small enough that the assembled history overflows, and verifies the summary
 // is written to the session row.
 func TestRunCompactsAndPersistsSummary(t *testing.T) {
-	s, dbConn := newStore(t)
-	seedUser(t, dbConn, 1)
+	s, _ := newStore(t)
 
-	session, err := s.CreateSession(t.Context(), db.CreateSessionParams{UserID: 1})
+	session, err := s.CreateSession(t.Context(), "")
 	require.NoError(t, err)
 
 	mock := llm.NewMock()
@@ -47,11 +46,11 @@ func TestRunCompactsAndPersistsSummary(t *testing.T) {
 	}
 
 	// Seed a long conversation so a tiny window overflows.
-	for i := range 20 {
+	for range 20 {
 		_, err := s.AppendMessage(t.Context(), db.AppendMessageParams{
 			SessionID: session.ID,
 			Role:      string(llm.RoleUser),
-			Content:   "question " + manyX(i),
+			Content:   "question " + manyX(100),
 		})
 		require.NoError(t, err)
 	}
@@ -60,7 +59,7 @@ func TestRunCompactsAndPersistsSummary(t *testing.T) {
 	history, err := engine.BuildHistory(t.Context(), session.ID)
 	require.NoError(t, err)
 
-	err = engine.Run(t.Context(), chat.DiscardSink{}, session.ID, 1, 0,
+	err = engine.Run(t.Context(), chat.DiscardSink{}, session.ID,
 		llm.Request{Messages: history})
 	require.NoError(t, err)
 

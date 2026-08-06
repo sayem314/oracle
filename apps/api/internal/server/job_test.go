@@ -1,7 +1,6 @@
 package server_test
 
 import (
-	"database/sql"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -16,7 +15,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/sayem314/oracle/apps/api/internal/llm"
-	"github.com/sayem314/oracle/apps/api/internal/store/db"
 )
 
 type jobResponse struct {
@@ -25,7 +23,6 @@ type jobResponse struct {
 	Schedule   string     `json:"schedule"`
 	Prompt     string     `json:"prompt"`
 	Enabled    bool       `json:"enabled"`
-	ProviderID int64      `json:"provider_id"`
 	Model      string     `json:"model"`
 	LastStatus string     `json:"last_status"`
 	NextRunAt  *time.Time `json:"next_run_at"`
@@ -97,6 +94,20 @@ func TestCreateJob(t *testing.T) {
 	assert.Nil(t, job.SessionID)
 }
 
+func TestCreateJobModel(t *testing.T) {
+	app, _, dbConn := newTestApp(t, llm.NewMock())
+	cookie, _ := signUp(t, app, dbConn, "owner@example.com")
+
+	res := createJob(t, app, cookie, map[string]any{
+		"schedule": "0 8 * * *",
+		"prompt":   "hi",
+		"model":    "pinned-model",
+	})
+	require.Equal(t, http.StatusCreated, res.StatusCode)
+	job := decodeJob(t, res)
+	assert.Equal(t, "pinned-model", job.Model)
+}
+
 func TestCreateJobValidation(t *testing.T) {
 	app, _, dbConn := newTestApp(t, llm.NewMock())
 	cookie, _ := signUp(t, app, dbConn, "owner@example.com")
@@ -119,12 +130,12 @@ func TestCreateJobValidation(t *testing.T) {
 	})
 }
 
-func TestCreateJobSessionOwnership(t *testing.T) {
+func TestCreateJobSession(t *testing.T) {
 	app, s, dbConn := newTestApp(t, llm.NewMock())
-	cookie, userID := signUp(t, app, dbConn, "owner@example.com")
+	cookie, _ := signUp(t, app, dbConn, "owner@example.com")
 
-	t.Run("own session", func(t *testing.T) {
-		session, err := s.CreateSession(t.Context(), db.CreateSessionParams{UserID: userID})
+	t.Run("existing session", func(t *testing.T) {
+		session, err := s.CreateSession(t.Context(), "")
 		require.NoError(t, err)
 
 		res := createJob(t, app, cookie, map[string]any{
@@ -146,44 +157,19 @@ func TestCreateJobSessionOwnership(t *testing.T) {
 		})
 		assert.Equal(t, http.StatusNotFound, res.StatusCode)
 	})
-
-	t.Run("someone else's session", func(t *testing.T) {
-		seedUser(t, dbConn, 42)
-		session, err := s.CreateSession(t.Context(), db.CreateSessionParams{UserID: 42})
-		require.NoError(t, err)
-
-		res := createJob(t, app, cookie, map[string]any{
-			"schedule":   "0 8 * * *",
-			"prompt":     "hi",
-			"session_id": session.ID,
-		})
-		assert.Equal(t, http.StatusNotFound, res.StatusCode)
-	})
 }
 
-func TestListJobsIsolation(t *testing.T) {
-	app, s, dbConn := newTestApp(t, llm.NewMock())
+func TestListJobs(t *testing.T) {
+	app, _, dbConn := newTestApp(t, llm.NewMock())
 	cookie, _ := signUp(t, app, dbConn, "owner@example.com")
 
-	require.Equal(t, http.StatusCreated, createJob(t, app, cookie, map[string]any{"schedule": "0 8 * * *", "prompt": "mine"}).StatusCode)
-
-	// A second user is seeded directly (sign-up locks after the first user) and
-	// gets a job through the store, bypassing the API.
-	seedUser(t, dbConn, 42)
-	_, err := s.CreateJob(t.Context(), db.CreateJobParams{
-		UserID:    42,
-		Schedule:  "0 9 * * *",
-		Prompt:    "theirs",
-		Enabled:   1,
-		NextRunAt: nullTimeIn(24 * time.Hour),
-	})
-	require.NoError(t, err)
+	require.Equal(t, http.StatusCreated, createJob(t, app, cookie, map[string]any{"schedule": "0 8 * * *", "prompt": "one"}).StatusCode)
+	require.Equal(t, http.StatusCreated, createJob(t, app, cookie, map[string]any{"schedule": "0 9 * * *", "prompt": "two"}).StatusCode)
 
 	res := doJobsRequest(t, app, http.MethodGet, "/api/v1/jobs", cookie, nil)
 	require.Equal(t, http.StatusOK, res.StatusCode)
 	jobs := decodeJobList(t, res)
-	require.Len(t, jobs, 1)
-	assert.Equal(t, "mine", jobs[0].Prompt)
+	require.Len(t, jobs, 2)
 }
 
 func TestUpdateJob(t *testing.T) {
@@ -209,6 +195,13 @@ func TestUpdateJob(t *testing.T) {
 		assert.True(t, job.NextRunAt.After(time.Now()))
 	})
 
+	t.Run("set model", func(t *testing.T) {
+		res := doJobsRequest(t, app, http.MethodPatch, "/api/v1/jobs/"+itoa(created.ID), cookie, map[string]any{"model": "pinned"})
+		require.Equal(t, http.StatusOK, res.StatusCode)
+		job := decodeJob(t, res)
+		assert.Equal(t, "pinned", job.Model)
+	})
+
 	t.Run("invalid schedule", func(t *testing.T) {
 		res := doJobsRequest(t, app, http.MethodPatch, "/api/v1/jobs/"+itoa(created.ID), cookie, map[string]any{"schedule": "nope"})
 		assert.Equal(t, http.StatusBadRequest, res.StatusCode)
@@ -218,28 +211,6 @@ func TestUpdateJob(t *testing.T) {
 		res := doJobsRequest(t, app, http.MethodPatch, "/api/v1/jobs/99999", cookie, map[string]any{"enabled": false})
 		assert.Equal(t, http.StatusNotFound, res.StatusCode)
 	})
-}
-
-func TestUpdateJobOtherUser(t *testing.T) {
-	app, s, dbConn := newTestApp(t, llm.NewMock())
-	intruderCookie, _ := signUp(t, app, dbConn, "intruder@example.com")
-
-	// The victim is seeded directly and owns a job created through the store.
-	seedUser(t, dbConn, 42)
-	victimJob, err := s.CreateJob(t.Context(), db.CreateJobParams{
-		UserID:    42,
-		Schedule:  "0 8 * * *",
-		Prompt:    "victim",
-		Enabled:   1,
-		NextRunAt: nullTimeIn(24 * time.Hour),
-	})
-	require.NoError(t, err)
-
-	res := doJobsRequest(t, app, http.MethodPatch, "/api/v1/jobs/"+itoa(victimJob.ID), intruderCookie, map[string]any{"enabled": false})
-	assert.Equal(t, http.StatusNotFound, res.StatusCode)
-
-	res = doJobsRequest(t, app, http.MethodDelete, "/api/v1/jobs/"+itoa(victimJob.ID), intruderCookie, nil)
-	assert.Equal(t, http.StatusNotFound, res.StatusCode)
 }
 
 func TestDeleteJob(t *testing.T) {
@@ -259,98 +230,6 @@ func TestDeleteJob(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, res.StatusCode)
 }
 
-func TestJobProviderPin(t *testing.T) {
-	app, _, dbConn := newTestApp(t, llm.NewMock())
-	cookie, _ := signUp(t, app, dbConn, "owner@example.com")
-
-	res := doProviderRequest(t, app, http.MethodPost, "/api/v1/llm/providers", cookie, validProviderPayload("router"))
-	require.Equal(t, http.StatusCreated, res.StatusCode)
-	provider := decodeProvider(t, res)
-
-	t.Run("create with pin", func(t *testing.T) {
-		res := createJob(t, app, cookie, map[string]any{
-			"schedule":    "0 8 * * *",
-			"prompt":      "hi",
-			"provider_id": provider.ID,
-			"model":       "router-model-2",
-		})
-		require.Equal(t, http.StatusCreated, res.StatusCode)
-		job := decodeJob(t, res)
-		assert.Equal(t, provider.ID, job.ProviderID)
-		assert.Equal(t, "router-model-2", job.Model)
-	})
-
-	t.Run("unknown provider", func(t *testing.T) {
-		res := createJob(t, app, cookie, map[string]any{
-			"schedule": "0 8 * * *", "prompt": "hi", "provider_id": 999,
-		})
-		assert.Equal(t, http.StatusNotFound, res.StatusCode)
-	})
-
-	t.Run("model not in provider", func(t *testing.T) {
-		res := createJob(t, app, cookie, map[string]any{
-			"schedule": "0 8 * * *", "prompt": "hi", "provider_id": provider.ID, "model": "nope",
-		})
-		assert.Equal(t, http.StatusBadRequest, res.StatusCode)
-	})
-
-	t.Run("model without provider is ignored", func(t *testing.T) {
-		res := createJob(t, app, cookie, map[string]any{
-			"schedule": "0 8 * * *", "prompt": "hi", "model": "nope",
-		})
-		require.Equal(t, http.StatusCreated, res.StatusCode)
-		job := decodeJob(t, res)
-		assert.Zero(t, job.ProviderID)
-		assert.Empty(t, job.Model)
-	})
-}
-
-func TestUpdateJobProviderPin(t *testing.T) {
-	app, _, dbConn := newTestApp(t, llm.NewMock())
-	cookie, _ := signUp(t, app, dbConn, "owner@example.com")
-
-	res := doProviderRequest(t, app, http.MethodPost, "/api/v1/llm/providers", cookie, validProviderPayload("router"))
-	require.Equal(t, http.StatusCreated, res.StatusCode)
-	provider := decodeProvider(t, res)
-
-	created := mustCreateJob(t, app, cookie, "0 8 * * *", "hi")
-	path := "/api/v1/jobs/" + itoa(created.ID)
-
-	t.Run("pin provider and model", func(t *testing.T) {
-		res := doJobsRequest(t, app, http.MethodPatch, path, cookie, map[string]any{
-			"provider_id": provider.ID,
-			"model":       "router-model-1",
-		})
-		require.Equal(t, http.StatusOK, res.StatusCode)
-		job := decodeJob(t, res)
-		assert.Equal(t, provider.ID, job.ProviderID)
-		assert.Equal(t, "router-model-1", job.Model)
-	})
-
-	t.Run("clear pin", func(t *testing.T) {
-		res := doJobsRequest(t, app, http.MethodPatch, path, cookie, map[string]any{"provider_id": 0})
-		require.Equal(t, http.StatusOK, res.StatusCode)
-		job := decodeJob(t, res)
-		assert.Zero(t, job.ProviderID)
-		assert.Empty(t, job.Model)
-	})
-
-	t.Run("invalid pin rejected", func(t *testing.T) {
-		res := doJobsRequest(t, app, http.MethodPatch, path, cookie, map[string]any{"provider_id": 999})
-		assert.Equal(t, http.StatusNotFound, res.StatusCode)
-
-		res = doJobsRequest(t, app, http.MethodPatch, path, cookie, map[string]any{
-			"provider_id": provider.ID,
-			"model":       "nope",
-		})
-		assert.Equal(t, http.StatusBadRequest, res.StatusCode)
-	})
-}
-
 func itoa(id int64) string {
 	return strconv.FormatInt(id, 10)
-}
-
-func nullTimeIn(d time.Duration) sql.NullTime {
-	return sql.NullTime{Time: time.Now().Add(d), Valid: true}
 }

@@ -11,7 +11,7 @@ import (
 )
 
 type Store interface {
-	CreateSession(ctx context.Context, arg db.CreateSessionParams) (db.Session, error)
+	CreateSession(ctx context.Context, title string) (db.Session, error)
 	GetSession(ctx context.Context, id int64) (db.Session, error)
 	ListSessions(ctx context.Context, arg db.ListSessionsParams) ([]db.Session, error)
 	UpdateSessionTitle(ctx context.Context, arg db.UpdateSessionTitleParams) error
@@ -32,7 +32,7 @@ type Store interface {
 
 	CreateJob(ctx context.Context, arg db.CreateJobParams) (db.Job, error)
 	GetJob(ctx context.Context, id int64) (db.Job, error)
-	ListJobsByUser(ctx context.Context, userID int64) ([]db.Job, error)
+	ListJobs(ctx context.Context) ([]db.Job, error)
 	UpdateJob(ctx context.Context, arg db.UpdateJobParams) (db.Job, error)
 	DeleteJob(ctx context.Context, id int64) error
 	ListDueJobs(ctx context.Context, nextRunAt sql.NullTime) ([]db.Job, error)
@@ -40,25 +40,12 @@ type Store interface {
 	SetJobStatus(ctx context.Context, arg db.SetJobStatusParams) error
 	SetJobSession(ctx context.Context, arg db.SetJobSessionParams) error
 
-	CreateLLMProvider(ctx context.Context, arg db.CreateLLMProviderParams) (db.LlmProvider, error)
-	GetLLMProvider(ctx context.Context, id int64) (db.LlmProvider, error)
-	ListLLMProviders(ctx context.Context) ([]db.LlmProvider, error)
-	GetDefaultLLMProvider(ctx context.Context) (db.LlmProvider, error)
-	UpdateLLMProvider(ctx context.Context, arg db.UpdateLLMProviderParams) (db.LlmProvider, error)
-	ClearDefaultLLMProviders(ctx context.Context) error
-	DeleteLLMProvider(ctx context.Context, id int64) error
-	PromoteNextLLMProvider(ctx context.Context) (db.LlmProvider, error)
-	ListLLMModelsByProvider(ctx context.Context, providerID int64) ([]db.LlmModel, error)
-	InsertLLMModel(ctx context.Context, arg db.InsertLLMModelParams) error
-	DeleteLLMModelsByProvider(ctx context.Context, providerID int64) error
+	GetLLMProvider(ctx context.Context) (db.LlmProvider, error)
+	UpsertLLMProvider(ctx context.Context, arg db.UpsertLLMProviderParams) (db.LlmProvider, error)
+	SetLLMModel(ctx context.Context, model string) (db.LlmProvider, error)
 
-	GetUserLLMPrefs(ctx context.Context, userID int64) (db.UserLlmPref, error)
-	UpsertUserLLMPrefs(ctx context.Context, arg db.UpsertUserLLMPrefsParams) (db.UserLlmPref, error)
-	DeleteUserLLMPrefs(ctx context.Context, userID int64) error
-
-	GetUserPermissions(ctx context.Context, userID int64) (db.UserPermission, error)
-	UpsertUserPermissions(ctx context.Context, arg db.UpsertUserPermissionsParams) (db.UserPermission, error)
-	DeleteUserPermissions(ctx context.Context, userID int64) error
+	GetSettings(ctx context.Context) (db.Setting, error)
+	UpsertSettings(ctx context.Context, arg db.UpsertSettingsParams) (db.Setting, error)
 }
 
 // sqlStore embeds the generated Queries and adds methods that need more than

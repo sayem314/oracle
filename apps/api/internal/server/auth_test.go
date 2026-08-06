@@ -11,7 +11,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/sayem314/oracle/apps/api/internal/llm"
-	"github.com/sayem314/oracle/apps/api/internal/store/db"
 )
 
 func TestChatRequiresAuth(t *testing.T) {
@@ -29,19 +28,6 @@ func TestChatRejectsInvalidSession(t *testing.T) {
 	res := postChat(t, app, "limen_session=bogus-token", map[string]any{"message": "hi"})
 	require.Equal(t, http.StatusUnauthorized, res.StatusCode)
 	assert.Equal(t, "unauthorized", decodeErrorMessage(t, res))
-}
-
-func TestChatRejectsOtherUsersSession(t *testing.T) {
-	app, s, dbConn := newTestApp(t, llm.NewMock())
-	cookie, _ := signUp(t, app, dbConn, "owner@example.com")
-	seedUser(t, dbConn, 999)
-
-	foreign, err := s.CreateSession(t.Context(), db.CreateSessionParams{UserID: 999})
-	require.NoError(t, err)
-
-	res := postChat(t, app, cookie, map[string]any{"session_id": foreign.ID, "message": "hi"})
-	require.Equal(t, http.StatusNotFound, res.StatusCode)
-	assert.Equal(t, "session not found", decodeErrorMessage(t, res))
 }
 
 func TestSignupLocksAfterFirstUser(t *testing.T) {

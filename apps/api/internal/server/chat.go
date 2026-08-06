@@ -17,17 +17,14 @@ type chatLocalsKey struct{}
 
 type chatContext struct {
 	sessionID     int64
-	userID        int64
-	providerID    int64
 	userMessageID int64
 	request       llm.Request
 }
 
 type chatRequest struct {
-	SessionID  *int64 `json:"session_id"`
-	Message    string `json:"message"`
-	Model      string `json:"model"`
-	ProviderID int64  `json:"provider_id"`
+	SessionID *int64 `json:"session_id"`
+	Message   string `json:"message"`
+	Model     string `json:"model"`
 }
 
 type sseSink struct {
@@ -63,31 +60,24 @@ func prepareChat(deps Deps, c fiber.Ctx) (chatContext, error) {
 	if strings.TrimSpace(req.Message) == "" {
 		return chatContext{}, fiber.NewError(fiber.StatusBadRequest, "message is required")
 	}
-	if req.ProviderID < 0 {
-		return chatContext{}, fiber.NewError(fiber.StatusBadRequest, "invalid provider_id")
-	}
 
 	ctx := c.Context()
-	userID := c.Locals(userIDKey{}).(int64)
 
 	var sessionID int64
 	switch req.SessionID {
 	case nil:
-		session, err := deps.Store.CreateSession(ctx, db.CreateSessionParams{UserID: userID})
+		session, err := deps.Store.CreateSession(ctx, "")
 		if err != nil {
 			return chatContext{}, err
 		}
 		sessionID = session.ID
 	default:
-		session, err := deps.Store.GetSession(ctx, *req.SessionID)
+		_, err := deps.Store.GetSession(ctx, *req.SessionID)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return chatContext{}, fiber.NewError(fiber.StatusNotFound, "session not found")
 			}
 			return chatContext{}, err
-		}
-		if session.UserID != userID {
-			return chatContext{}, fiber.NewError(fiber.StatusNotFound, "session not found")
 		}
 		pending, err := deps.Store.CountPendingApprovalsBySession(ctx, *req.SessionID)
 		if err != nil {
@@ -115,8 +105,6 @@ func prepareChat(deps Deps, c fiber.Ctx) (chatContext, error) {
 
 	return chatContext{
 		sessionID:     sessionID,
-		userID:        userID,
-		providerID:    req.ProviderID,
 		userMessageID: userMsg.ID,
 		request:       llm.Request{Model: req.Model, Messages: history},
 	}, nil
@@ -133,7 +121,7 @@ func streamChat(deps Deps, c fiber.Ctx, s *sse.Stream) error {
 		return err
 	}
 
-	if err := deps.Chat.Run(s.Context(), sink, cc.sessionID, cc.userID, cc.providerID, cc.request); err != nil {
+	if err := deps.Chat.Run(s.Context(), sink, cc.sessionID, cc.request); err != nil {
 		return sendChatError(s, err)
 	}
 	return nil

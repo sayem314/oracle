@@ -1,10 +1,12 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/gofiber/fiber/v3"
@@ -20,6 +22,7 @@ import (
 	"github.com/sayem314/oracle/apps/api/internal/scheduler"
 	"github.com/sayem314/oracle/apps/api/internal/server"
 	"github.com/sayem314/oracle/apps/api/internal/store"
+	"github.com/sayem314/oracle/apps/api/internal/store/db"
 	"github.com/sayem314/oracle/apps/api/internal/tool"
 	"github.com/sayem314/oracle/apps/api/internal/tool/all"
 )
@@ -69,19 +72,21 @@ func main() {
 	}
 	log.Info().Str("provider", cfg.LLMProvider).Msg("llm provider ready")
 
+	st := store.New(sqlDB)
+	seedProvider(st, cfg)
+	seedSettings(st, cfg)
+	ruleset := loadRuleset(st, cfg)
+
 	tools := tool.NewRegistry()
 	if err := tools.RegisterGroups(all.Groups()...); err != nil {
 		log.Fatal().Err(err).Msg("register tools")
 	}
 
-	st := store.New(sqlDB)
-	ruleset := permission.NewRuleset(cfg.PermissionDefault, cfg.PermissionRules)
 	engine := &chat.Engine{
-		Store:              st,
-		LLM:                &chat.LLMResolver{Store: st, Default: provider},
-		Tools:              tools,
-		Permissions:        ruleset,
-		PermissionResolver: &chat.PermissionOverlay{Store: st},
+		Store:       st,
+		LLM:         &chat.LLMResolver{Store: st, Default: provider},
+		Tools:       tools,
+		Permissions: ruleset,
 		Compaction: chat.CompactionConfig{
 			ContextWindow:    cfg.ContextWindow,
 			ReserveTokens:    cfg.ContextReserve,
@@ -119,4 +124,60 @@ func main() {
 	}); err != nil {
 		log.Fatal().Err(err).Msg("listen")
 	}
+}
+
+// seedProvider writes the singleton LLM provider row from env config unless
+// one already exists, so a fresh install boots with the configured gateway.
+func seedProvider(st store.Store, cfg config.Config) {
+	if _, err := st.GetLLMProvider(context.Background()); err == nil {
+		return
+	}
+	if _, err := st.UpsertLLMProvider(context.Background(), db.UpsertLLMProviderParams{
+		Provider: cfg.LLMProvider,
+		BaseUrl:  cfg.LLMBaseURL,
+		ApiKey:   cfg.LLMAPIKey,
+		Model:    cfg.LLMModel,
+	}); err != nil {
+		log.Fatal().Err(err).Msg("seed llm provider")
+	}
+}
+
+// seedSettings writes the global permission ruleset from env config unless a
+// row already exists.
+func seedSettings(st store.Store, cfg config.Config) {
+	if _, err := st.GetSettings(context.Background()); err == nil {
+		return
+	}
+	if _, err := st.UpsertSettings(context.Background(), db.UpsertSettingsParams{
+		PermissionDefault: string(cfg.PermissionDefault),
+		PermissionRules:   permissionRulesString(cfg.PermissionRules),
+	}); err != nil {
+		log.Fatal().Err(err).Msg("seed settings")
+	}
+}
+
+// loadRuleset builds the global permission ruleset from stored settings or env
+// config when storage is empty.
+func loadRuleset(st store.Store, cfg config.Config) *permission.Ruleset {
+	s, err := st.GetSettings(context.Background())
+	if err != nil {
+		return permission.NewRuleset(cfg.PermissionDefault, cfg.PermissionRules)
+	}
+	def, err := permission.ParseVerdict(s.PermissionDefault)
+	if err != nil {
+		def = cfg.PermissionDefault
+	}
+	rules, err := permission.ParseRules(s.PermissionRules)
+	if err != nil {
+		rules = cfg.PermissionRules
+	}
+	return permission.NewRuleset(def, rules)
+}
+
+func permissionRulesString(rules []permission.Rule) string {
+	var out []string
+	for _, r := range rules {
+		out = append(out, string(r.Tool)+":"+string(r.Verdict))
+	}
+	return strings.Join(out, ",")
 }

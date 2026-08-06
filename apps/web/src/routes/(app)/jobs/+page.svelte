@@ -1,30 +1,20 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { listJobs, createJob, updateJob, deleteJob, listLLMProviders, type Job, type LLMProvider } from "$lib/api";
+  import { listJobs, createJob, updateJob, deleteJob, type Job } from "$lib/api";
 
   let jobs = $state<Job[]>([]);
-  let providers = $state<LLMProvider[]>([]);
   let loading = $state(true);
   let error = $state("");
 
   let showForm = $state(false);
   let prompt = $state("");
   let schedule = $state("");
-  let selection = $state("");
+  let model = $state("");
   let saving = $state(false);
 
   onMount(() => {
     void refresh();
-    void refreshProviders();
   });
-
-  async function refreshProviders() {
-    try {
-      providers = await listLLMProviders();
-    } catch {
-      // A failed provider load should not block job creation.
-    }
-  }
 
   async function refresh() {
     error = "";
@@ -37,27 +27,19 @@
     }
   }
 
-  function parseSelection(value: string): [number | undefined, string | undefined] {
-    if (!value) return [undefined, undefined];
-    const [id, model] = value.split(":", 2);
-    return [Number(id), model || undefined];
-  }
-
   async function submit() {
     if (saving || !prompt.trim() || !schedule.trim()) return;
     saving = true;
     error = "";
     try {
-      const [providerId, model] = parseSelection(selection);
       await createJob({
         schedule: schedule.trim(),
         prompt: prompt.trim(),
-        provider_id: providerId,
-        model,
+        model: model.trim() || undefined,
       });
       prompt = "";
       schedule = "";
-      selection = "";
+      model = "";
       showForm = false;
       await refresh();
     } catch (err) {
@@ -96,10 +78,6 @@
     if (!job.last_status) return "never run";
     return job.last_status;
   }
-
-  function providerName(id: number): string {
-    return providers.find((p) => p.id === id)?.name ?? `provider ${id}`;
-  }
 </script>
 
 <div class="jobs">
@@ -127,21 +105,10 @@
           Schedule
           <input bind:value={schedule} placeholder="0 8 * * *  (5-field cron)" />
         </label>
-        {#if providers.length > 0}
-          <label>
-            Provider &amp; model (optional)
-            <select bind:value={selection}>
-              <option value="">My default (my preference)</option>
-              {#each providers as p (p.id)}
-                <optgroup label={p.name}>
-                  {#each p.models as m (m)}
-                    <option value={`${p.id}:${m}`}>{m}{m === p.default_model ? " (default)" : ""}</option>
-                  {/each}
-                </optgroup>
-              {/each}
-            </select>
-          </label>
-        {/if}
+        <label>
+          Model (optional)
+          <input bind:value={model} placeholder="gpt-4o (empty uses the global model)" />
+        </label>
         <div class="form-actions">
           <button class="primary" type="submit" disabled={saving || !prompt.trim() || !schedule.trim()}>
             Save job
@@ -168,8 +135,8 @@
               <div class="job-prompt">{job.prompt}</div>
               <div class="job-meta">
                 <span class="mono">{job.schedule}</span>
-                {#if job.provider_id}
-                  <span class="pin">provider: {providerName(job.provider_id)}{job.model ? ` · ${job.model}` : ""}</span>
+                {#if job.model}
+                  <span class="pin">model: {job.model}</span>
                 {/if}
                 <span>next: {formatWhen(job.next_run_at)}</span>
                 <span>last: {formatWhen(job.last_run_at)} ({statusLabel(job)})</span>

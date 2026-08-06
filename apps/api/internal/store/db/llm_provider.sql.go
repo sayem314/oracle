@@ -9,269 +9,80 @@ import (
 	"context"
 )
 
-const clearDefaultLLMProviders = `-- name: ClearDefaultLLMProviders :exec
-UPDATE llm_providers
-SET is_default = 0
-WHERE is_default = 1
-`
-
-func (q *Queries) ClearDefaultLLMProviders(ctx context.Context) error {
-	_, err := q.db.ExecContext(ctx, clearDefaultLLMProviders)
-	return err
-}
-
-const createLLMProvider = `-- name: CreateLLMProvider :one
-INSERT INTO llm_providers (name, provider, base_url, api_key, is_default)
-VALUES (?, ?, ?, ?, ?)
-RETURNING id, name, provider, base_url, api_key, is_default, created_at, updated_at
-`
-
-type CreateLLMProviderParams struct {
-	Name      string
-	Provider  string
-	BaseUrl   string
-	ApiKey    string
-	IsDefault int64
-}
-
-func (q *Queries) CreateLLMProvider(ctx context.Context, arg CreateLLMProviderParams) (LlmProvider, error) {
-	row := q.db.QueryRowContext(ctx, createLLMProvider,
-		arg.Name,
-		arg.Provider,
-		arg.BaseUrl,
-		arg.ApiKey,
-		arg.IsDefault,
-	)
-	var i LlmProvider
-	err := row.Scan(
-		&i.ID,
-		&i.Name,
-		&i.Provider,
-		&i.BaseUrl,
-		&i.ApiKey,
-		&i.IsDefault,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-	)
-	return i, err
-}
-
-const deleteLLMModelsByProvider = `-- name: DeleteLLMModelsByProvider :exec
-DELETE FROM llm_models
-WHERE provider_id = ?
-`
-
-func (q *Queries) DeleteLLMModelsByProvider(ctx context.Context, providerID int64) error {
-	_, err := q.db.ExecContext(ctx, deleteLLMModelsByProvider, providerID)
-	return err
-}
-
-const deleteLLMProvider = `-- name: DeleteLLMProvider :exec
-DELETE FROM llm_providers
-WHERE id = ?
-`
-
-func (q *Queries) DeleteLLMProvider(ctx context.Context, id int64) error {
-	_, err := q.db.ExecContext(ctx, deleteLLMProvider, id)
-	return err
-}
-
-const getDefaultLLMProvider = `-- name: GetDefaultLLMProvider :one
-SELECT id, name, provider, base_url, api_key, is_default, created_at, updated_at
-FROM llm_providers
-WHERE is_default = 1
-`
-
-func (q *Queries) GetDefaultLLMProvider(ctx context.Context) (LlmProvider, error) {
-	row := q.db.QueryRowContext(ctx, getDefaultLLMProvider)
-	var i LlmProvider
-	err := row.Scan(
-		&i.ID,
-		&i.Name,
-		&i.Provider,
-		&i.BaseUrl,
-		&i.ApiKey,
-		&i.IsDefault,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-	)
-	return i, err
-}
-
 const getLLMProvider = `-- name: GetLLMProvider :one
-SELECT id, name, provider, base_url, api_key, is_default, created_at, updated_at
+SELECT id, provider, base_url, api_key, model, updated_at
 FROM llm_providers
-WHERE id = ?
+WHERE id = 1
 `
 
-func (q *Queries) GetLLMProvider(ctx context.Context, id int64) (LlmProvider, error) {
-	row := q.db.QueryRowContext(ctx, getLLMProvider, id)
+func (q *Queries) GetLLMProvider(ctx context.Context) (LlmProvider, error) {
+	row := q.db.QueryRowContext(ctx, getLLMProvider)
 	var i LlmProvider
 	err := row.Scan(
 		&i.ID,
-		&i.Name,
 		&i.Provider,
 		&i.BaseUrl,
 		&i.ApiKey,
-		&i.IsDefault,
-		&i.CreatedAt,
+		&i.Model,
 		&i.UpdatedAt,
 	)
 	return i, err
 }
 
-const insertLLMModel = `-- name: InsertLLMModel :exec
-INSERT INTO llm_models (provider_id, name, is_default)
-VALUES (?, ?, ?)
-`
-
-type InsertLLMModelParams struct {
-	ProviderID int64
-	Name       string
-	IsDefault  int64
-}
-
-func (q *Queries) InsertLLMModel(ctx context.Context, arg InsertLLMModelParams) error {
-	_, err := q.db.ExecContext(ctx, insertLLMModel, arg.ProviderID, arg.Name, arg.IsDefault)
-	return err
-}
-
-const listLLMModelsByProvider = `-- name: ListLLMModelsByProvider :many
-SELECT id, provider_id, name, is_default
-FROM llm_models
-WHERE provider_id = ?
-ORDER BY id
-`
-
-func (q *Queries) ListLLMModelsByProvider(ctx context.Context, providerID int64) ([]LlmModel, error) {
-	rows, err := q.db.QueryContext(ctx, listLLMModelsByProvider, providerID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []LlmModel
-	for rows.Next() {
-		var i LlmModel
-		if err := rows.Scan(
-			&i.ID,
-			&i.ProviderID,
-			&i.Name,
-			&i.IsDefault,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listLLMProviders = `-- name: ListLLMProviders :many
-SELECT id, name, provider, base_url, api_key, is_default, created_at, updated_at
-FROM llm_providers
-ORDER BY id
-`
-
-func (q *Queries) ListLLMProviders(ctx context.Context) ([]LlmProvider, error) {
-	rows, err := q.db.QueryContext(ctx, listLLMProviders)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []LlmProvider
-	for rows.Next() {
-		var i LlmProvider
-		if err := rows.Scan(
-			&i.ID,
-			&i.Name,
-			&i.Provider,
-			&i.BaseUrl,
-			&i.ApiKey,
-			&i.IsDefault,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const promoteNextLLMProvider = `-- name: PromoteNextLLMProvider :one
+const setLLMModel = `-- name: SetLLMModel :one
 UPDATE llm_providers
-SET is_default = 1, updated_at = CURRENT_TIMESTAMP
-WHERE id = (
-	SELECT id
-	FROM llm_providers
-	WHERE is_default = 0
-	ORDER BY id
-	LIMIT 1
-)
-RETURNING id, name, provider, base_url, api_key, is_default, created_at, updated_at
+SET model = ?, updated_at = CURRENT_TIMESTAMP
+WHERE id = 1
+RETURNING id, provider, base_url, api_key, model, updated_at
 `
 
-func (q *Queries) PromoteNextLLMProvider(ctx context.Context) (LlmProvider, error) {
-	row := q.db.QueryRowContext(ctx, promoteNextLLMProvider)
+func (q *Queries) SetLLMModel(ctx context.Context, model string) (LlmProvider, error) {
+	row := q.db.QueryRowContext(ctx, setLLMModel, model)
 	var i LlmProvider
 	err := row.Scan(
 		&i.ID,
-		&i.Name,
 		&i.Provider,
 		&i.BaseUrl,
 		&i.ApiKey,
-		&i.IsDefault,
-		&i.CreatedAt,
+		&i.Model,
 		&i.UpdatedAt,
 	)
 	return i, err
 }
 
-const updateLLMProvider = `-- name: UpdateLLMProvider :one
-UPDATE llm_providers
-SET name = ?, provider = ?, base_url = ?, api_key = ?, is_default = ?, updated_at = CURRENT_TIMESTAMP
-WHERE id = ?
-RETURNING id, name, provider, base_url, api_key, is_default, created_at, updated_at
+const upsertLLMProvider = `-- name: UpsertLLMProvider :one
+INSERT INTO llm_providers (id, provider, base_url, api_key, model)
+VALUES (1, ?, ?, ?, ?)
+ON CONFLICT (id) DO UPDATE SET
+	provider = excluded.provider,
+	base_url = excluded.base_url,
+	api_key = excluded.api_key,
+	model = excluded.model,
+	updated_at = CURRENT_TIMESTAMP
+RETURNING id, provider, base_url, api_key, model, updated_at
 `
 
-type UpdateLLMProviderParams struct {
-	Name      string
-	Provider  string
-	BaseUrl   string
-	ApiKey    string
-	IsDefault int64
-	ID        int64
+type UpsertLLMProviderParams struct {
+	Provider string
+	BaseUrl  string
+	ApiKey   string
+	Model    string
 }
 
-func (q *Queries) UpdateLLMProvider(ctx context.Context, arg UpdateLLMProviderParams) (LlmProvider, error) {
-	row := q.db.QueryRowContext(ctx, updateLLMProvider,
-		arg.Name,
+func (q *Queries) UpsertLLMProvider(ctx context.Context, arg UpsertLLMProviderParams) (LlmProvider, error) {
+	row := q.db.QueryRowContext(ctx, upsertLLMProvider,
 		arg.Provider,
 		arg.BaseUrl,
 		arg.ApiKey,
-		arg.IsDefault,
-		arg.ID,
+		arg.Model,
 	)
 	var i LlmProvider
 	err := row.Scan(
 		&i.ID,
-		&i.Name,
 		&i.Provider,
 		&i.BaseUrl,
 		&i.ApiKey,
-		&i.IsDefault,
-		&i.CreatedAt,
+		&i.Model,
 		&i.UpdatedAt,
 	)
 	return i, err

@@ -38,28 +38,22 @@ func New(deps Deps) *fiber.App {
 	api.Patch("/jobs/:id", newUpdateJobHandler(deps))
 	api.Delete("/jobs/:id", newDeleteJobHandler(deps))
 
-	providers := api.Group("/llm/providers")
-	providers.Get("", newListLLMProvidersHandler(deps))
-	providersAdmin := api.Group("/llm/providers", requireAdmin(deps.Auth))
-	providersAdmin.Post("", newCreateLLMProviderHandler(deps))
-	providersAdmin.Patch("/:id", newUpdateLLMProviderHandler(deps))
-	providersAdmin.Delete("/:id", newDeleteLLMProviderHandler(deps))
-	providersAdmin.Post("/:id/models", newFetchLLMProviderModelsHandler(deps))
-	api.Get("/llm/prefs", newGetLLMPrefsHandler(deps))
-	api.Put("/llm/prefs", newPutLLMPrefsHandler(deps))
+	api.Get("/llm/provider", newGetLLMProviderHandler(deps))
+	admin := api.Group("/llm/provider", requireAdmin(deps.Auth))
+	admin.Put("", newUpsertLLMProviderHandler(deps))
+	admin.Post("/fetch-models", newFetchLLMModelsHandler(deps))
+	admin.Put("/model", newSetLLMModelHandler(deps))
+
+	adminSettings := api.Group("/settings", requireAdmin(deps.Auth))
+	adminSettings.Get("", newGetSettingsHandler(deps))
+	adminSettings.Put("", newUpsertSettingsHandler(deps))
+
+	api.Get("/profile", newProfileHandler(deps))
 
 	api.Get("/sessions", newListSessionsHandler(deps))
 	api.Get("/sessions/:id/messages", newListMessagesHandler(deps))
 	api.Patch("/sessions/:id", newUpdateSessionHandler(deps))
 	api.Delete("/sessions/:id", newDeleteSessionHandler(deps))
-
-	users := api.Group("/users", requireAdmin(deps.Auth))
-	users.Get("", newListUsersHandler(deps))
-	users.Post("", newCreateUserHandler(deps))
-	users.Delete("/:id", newDeleteUserHandler(deps))
-	users.Post("/:id/reset-password", newResetUserPasswordHandler(deps))
-	users.Put("/:id/permissions", newUpdateUserPermissionsHandler(deps))
-	users.Delete("/:id/permissions", newClearUserPermissionsHandler(deps))
 
 	return app
 }

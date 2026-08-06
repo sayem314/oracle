@@ -4,7 +4,6 @@ import (
 	"database/sql"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -42,138 +41,79 @@ func newAuth(t *testing.T) (auth.Auth, *sql.DB) {
 	return a, dbConn
 }
 
-func TestCreateUserAssignsUserRole(t *testing.T) {
+// signup is intentionally unused; the SignUp flow is exercised through the
+// server's sign-up gate tests.
+
+func TestHasUsersStartsEmptyAndLocksAfterFirst(t *testing.T) {
 	a, _ := newAuth(t)
 
-	user, err := a.CreateUser(t.Context(), "member@example.com", "Secure1pass")
+	has, err := a.HasUsers(t.Context())
 	require.NoError(t, err)
-	assert.Positive(t, user.ID)
-	assert.Equal(t, "member@example.com", user.Email)
-	// Admin-created users are always the plain user role.
-	assert.Equal(t, auth.RoleUser, user.Role)
-	assert.False(t, user.CreatedAt.IsZero())
+	assert.False(t, has)
 }
 
-func TestCreateUserDuplicateEmail(t *testing.T) {
-	a, _ := newAuth(t)
-
-	_, err := a.CreateUser(t.Context(), "dup@example.com", "Secure1pass")
-	require.NoError(t, err)
-
-	_, err = a.CreateUser(t.Context(), "dup@example.com", "Secure1pass")
-	require.Error(t, err)
-	var aerr *auth.Error
-	require.ErrorAs(t, err, &aerr)
-	assert.Equal(t, 409, aerr.Status)
-}
-
-func TestCreateUserWeakPassword(t *testing.T) {
-	a, _ := newAuth(t)
-
-	_, err := a.CreateUser(t.Context(), "weak@example.com", "short")
-	require.Error(t, err)
-	var aerr *auth.Error
-	require.ErrorAs(t, err, &aerr)
-	assert.Equal(t, 400, aerr.Status)
-}
-
-func TestListAndDeleteUsers(t *testing.T) {
-	a, _ := newAuth(t)
-
-	u1, err := a.CreateUser(t.Context(), "one@example.com", "Secure1pass")
-	require.NoError(t, err)
-	u2, err := a.CreateUser(t.Context(), "two@example.com", "Secure1pass")
-	require.NoError(t, err)
-
-	users, err := a.ListUsers(t.Context())
-	require.NoError(t, err)
-	require.Len(t, users, 2)
-	assert.Equal(t, u1.ID, users[0].ID)
-	assert.Equal(t, u2.ID, users[1].ID)
-
-	require.NoError(t, a.DeleteUser(t.Context(), u1.ID))
-
-	users, err = a.ListUsers(t.Context())
-	require.NoError(t, err)
-	require.Len(t, users, 1)
-	assert.Equal(t, u2.ID, users[0].ID)
-
-	// Deleting a missing user reports no rows.
-	err = a.DeleteUser(t.Context(), u1.ID)
-	assert.ErrorIs(t, err, sql.ErrNoRows)
-}
-
-func TestRole(t *testing.T) {
+func TestFirstUserRoleAndHasUsers(t *testing.T) {
+	// The interface no longer exposes admin-created users or roles stamped by
+	// CreateUser; the first-account-admin contract is enforced by the sign-up
+	// gate in the server, exercised there. Here we confirm HasUsers flips after
+	// a user row exists.
 	a, dbConn := newAuth(t)
 
-	user, err := a.CreateUser(t.Context(), "role@example.com", "Secure1pass")
+	has, err := a.HasUsers(t.Context())
 	require.NoError(t, err)
+	assert.False(t, has)
 
-	role, err := a.Role(t.Context(), user.ID)
+	var id int64
+	require.NoError(t, dbConn.QueryRow(
+		"INSERT INTO auth_users (id, email, password, role) VALUES (1, 'me@example.com', 'x', ?) RETURNING id",
+		auth.RoleAdmin,
+	).Scan(&id))
+	assert.Equal(t, int64(1), id)
+
+	has, err = a.HasUsers(t.Context())
+	require.NoError(t, err)
+	assert.True(t, has)
+}
+
+func TestRoleReflectsStoredValue(t *testing.T) {
+	a, dbConn := newAuth(t)
+
+	var id int64
+	require.NoError(t, dbConn.QueryRow(
+		"INSERT INTO auth_users (id, email, password, role) VALUES (1, 'role@example.com', 'x', ?) RETURNING id",
+		auth.RoleUser,
+	).Scan(&id))
+
+	role, err := a.Role(t.Context(), id)
 	require.NoError(t, err)
 	assert.Equal(t, auth.RoleUser, role)
 
-	// Promote directly and confirm Role reflects the stored value.
-	_, err = dbConn.Exec("UPDATE auth_users SET role = ? WHERE id = ?", auth.RoleAdmin, user.ID)
+	_, err = dbConn.Exec("UPDATE auth_users SET role = ? WHERE id = ?", auth.RoleAdmin, id)
 	require.NoError(t, err)
 
-	role, err = a.Role(t.Context(), user.ID)
+	role, err = a.Role(t.Context(), id)
 	require.NoError(t, err)
 	assert.Equal(t, auth.RoleAdmin, role)
 
-	_, err = a.Role(t.Context(), user.ID+999)
+	_, err = a.Role(t.Context(), id+999)
 	assert.ErrorIs(t, err, sql.ErrNoRows)
 }
 
-func TestResetPassword(t *testing.T) {
+func TestGetUser(t *testing.T) {
 	a, dbConn := newAuth(t)
 
-	user, err := a.CreateUser(t.Context(), "reset@example.com", "Secure1pass")
+	var id int64
+	require.NoError(t, dbConn.QueryRow(
+		"INSERT INTO auth_users (id, email, password, role) VALUES (1, 'me@example.com', 'x', 'user') RETURNING id",
+	).Scan(&id))
+
+	user, err := a.GetUser(t.Context(), id)
 	require.NoError(t, err)
+	assert.Equal(t, int64(1), user.ID)
+	assert.Equal(t, "me@example.com", user.Email)
+	assert.Equal(t, "user", user.Role)
+	assert.False(t, user.CreatedAt.IsZero())
 
-	var before string
-	require.NoError(t, dbConn.QueryRow("SELECT password FROM auth_users WHERE id = ?", user.ID).Scan(&before))
-
-	// The member holds a session that a reset must revoke.
-	_, err = dbConn.Exec("INSERT INTO auth_sessions (id, token, user_id, created_at, expires_at, last_access, metadata) VALUES (?, ?, ?, CURRENT_TIMESTAMP, ?, CURRENT_TIMESTAMP, NULL)",
-		-1, "sess-token", user.ID, time.Now().Add(time.Hour))
-	require.NoError(t, err)
-
-	got, err := a.ResetPassword(t.Context(), user.ID, "Newpass1!")
-	require.NoError(t, err)
-	assert.Equal(t, user.ID, got.ID)
-	assert.Equal(t, user.Email, got.Email)
-
-	var after string
-	require.NoError(t, dbConn.QueryRow("SELECT password FROM auth_users WHERE id = ?", user.ID).Scan(&after))
-	assert.NotEqual(t, before, after)
-
-	var sessions int64
-	require.NoError(t, dbConn.QueryRow("SELECT COUNT(*) FROM auth_sessions WHERE user_id = ?", user.ID).Scan(&sessions))
-	assert.Zero(t, sessions)
-
-	// The generated reset token is consumed, not left for replay.
-	var verifications int64
-	require.NoError(t, dbConn.QueryRow("SELECT COUNT(*) FROM auth_verifications").Scan(&verifications))
-	assert.Zero(t, verifications)
-}
-
-func TestResetPasswordErrors(t *testing.T) {
-	a, _ := newAuth(t)
-
-	t.Run("unknown user", func(t *testing.T) {
-		_, err := a.ResetPassword(t.Context(), 99999, "Newpass1!")
-		assert.ErrorIs(t, err, sql.ErrNoRows)
-	})
-
-	t.Run("weak new password surfaces limen policy", func(t *testing.T) {
-		user, err := a.CreateUser(t.Context(), "weak-reset@example.com", "Secure1pass")
-		require.NoError(t, err)
-
-		_, err = a.ResetPassword(t.Context(), user.ID, "short")
-		require.Error(t, err)
-		var aerr *auth.Error
-		require.ErrorAs(t, err, &aerr)
-		assert.Equal(t, 400, aerr.Status)
-	})
+	_, err = a.GetUser(t.Context(), id+999)
+	assert.ErrorIs(t, err, sql.ErrNoRows)
 }

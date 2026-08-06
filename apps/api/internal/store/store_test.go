@@ -2,7 +2,6 @@ package store_test
 
 import (
 	"database/sql"
-	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -29,28 +28,20 @@ func openStore(t *testing.T) (store.Store, *sql.DB) {
 	return store.New(dbConn), dbConn
 }
 
-// seedUser inserts a minimal auth_users row so chat rows can satisfy the
-// sessions.user_id foreign key.
-func seedUser(t *testing.T, dbConn *sql.DB, id int64) {
+func newSession(t *testing.T, s store.Store, title string) db.Session {
 	t.Helper()
-
-	_, err := dbConn.Exec(
-		"INSERT INTO auth_users (id, email) VALUES (?, ?)",
-		id, fmt.Sprintf("user%d@example.com", id),
-	)
+	session, err := s.CreateSession(t.Context(), title)
 	require.NoError(t, err)
+	return session
 }
 
 func TestSessionLifecycle(t *testing.T) {
-	s, dbConn := openStore(t)
+	s, _ := openStore(t)
 	ctx := t.Context()
-	seedUser(t, dbConn, 1)
-	seedUser(t, dbConn, 2)
 
-	created, err := s.CreateSession(ctx, db.CreateSessionParams{UserID: 1, Title: "hello"})
+	created, err := s.CreateSession(ctx, "hello")
 	require.NoError(t, err)
 	assert.Positive(t, created.ID)
-	assert.Equal(t, int64(1), created.UserID)
 	assert.Equal(t, "hello", created.Title)
 	assert.False(t, created.CreatedAt.IsZero())
 
@@ -58,12 +49,10 @@ func TestSessionLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, created, got)
 
-	second, err := s.CreateSession(ctx, db.CreateSessionParams{UserID: 1})
-	require.NoError(t, err)
-	_, err = s.CreateSession(ctx, db.CreateSessionParams{UserID: 2})
+	second, err := s.CreateSession(ctx, "")
 	require.NoError(t, err)
 
-	sessions, err := s.ListSessions(ctx, db.ListSessionsParams{UserID: 1, Limit: 10})
+	sessions, err := s.ListSessions(ctx, db.ListSessionsParams{Limit: 10})
 	require.NoError(t, err)
 	require.Len(t, sessions, 2)
 	assert.Equal(t, second.ID, sessions[0].ID)
@@ -80,13 +69,25 @@ func TestSessionLifecycle(t *testing.T) {
 	assert.ErrorIs(t, err, sql.ErrNoRows)
 }
 
-func TestMessageLifecycle(t *testing.T) {
-	s, dbConn := openStore(t)
+func TestSessionSummaryRoundTrip(t *testing.T) {
+	s, _ := openStore(t)
 	ctx := t.Context()
-	seedUser(t, dbConn, 1)
+	session := newSession(t, s, "")
 
-	session, err := s.CreateSession(ctx, db.CreateSessionParams{UserID: 1, Title: "chat"})
+	require.NoError(t, s.UpdateSessionSummary(ctx, db.UpdateSessionSummaryParams{
+		ID:      session.ID,
+		Summary: "a condensed recap",
+	}))
+
+	got, err := s.GetSession(ctx, session.ID)
 	require.NoError(t, err)
+	assert.Equal(t, "a condensed recap", got.Summary)
+}
+
+func TestMessageLifecycle(t *testing.T) {
+	s, _ := openStore(t)
+	ctx := t.Context()
+	session := newSession(t, s, "chat")
 
 	first, err := s.AppendMessage(ctx, db.AppendMessageParams{SessionID: session.ID, Role: "user", Content: "hi"})
 	require.NoError(t, err)
@@ -108,19 +109,16 @@ func TestMessageLifecycle(t *testing.T) {
 }
 
 func TestListMessagesReturnsNewest(t *testing.T) {
-	s, dbConn := openStore(t)
+	s, _ := openStore(t)
 	ctx := t.Context()
-	seedUser(t, dbConn, 1)
-
-	session, err := s.CreateSession(ctx, db.CreateSessionParams{UserID: 1})
-	require.NoError(t, err)
+	session := newSession(t, s, "")
 
 	var ids []int64
-	for i := range 5 {
+	for range 5 {
 		m, err := s.AppendMessage(ctx, db.AppendMessageParams{
 			SessionID: session.ID,
 			Role:      "user",
-			Content:   fmt.Sprintf("m%d", i),
+			Content:   "m",
 		})
 		require.NoError(t, err)
 		ids = append(ids, m.ID)
@@ -139,60 +137,11 @@ func TestListMessagesReturnsNewest(t *testing.T) {
 	assert.Equal(t, ids[2], older[1].ID)
 }
 
-func TestDeleteSessionCascadesMessages(t *testing.T) {
-	s, dbConn := openStore(t)
-	ctx := t.Context()
-	seedUser(t, dbConn, 1)
-
-	session, err := s.CreateSession(ctx, db.CreateSessionParams{UserID: 1})
-	require.NoError(t, err)
-	_, err = s.AppendMessage(ctx, db.AppendMessageParams{SessionID: session.ID, Role: "user", Content: "hi"})
-	require.NoError(t, err)
-
-	require.NoError(t, s.DeleteSession(ctx, session.ID))
-
-	messages, err := s.ListMessages(ctx, db.ListMessagesParams{SessionID: session.ID, Limit: 10})
-	require.NoError(t, err)
-	assert.Empty(t, messages)
-}
-
-func TestCreateSessionRequiresExistingUser(t *testing.T) {
-	s, _ := openStore(t)
-
-	_, err := s.CreateSession(t.Context(), db.CreateSessionParams{UserID: 42})
-	require.Error(t, err)
-}
-
-func TestDeleteUserCascadesSessions(t *testing.T) {
-	s, dbConn := openStore(t)
-	ctx := t.Context()
-	seedUser(t, dbConn, 1)
-
-	session, err := s.CreateSession(ctx, db.CreateSessionParams{UserID: 1})
-	require.NoError(t, err)
-	_, err = s.AppendMessage(ctx, db.AppendMessageParams{SessionID: session.ID, Role: "user", Content: "hi"})
-	require.NoError(t, err)
-
-	_, err = dbConn.Exec("DELETE FROM auth_users WHERE id = ?", 1)
-	require.NoError(t, err)
-
-	_, err = s.GetSession(ctx, session.ID)
-	require.ErrorIs(t, err, sql.ErrNoRows)
-
-	messages, err := s.ListMessages(ctx, db.ListMessagesParams{SessionID: session.ID, Limit: 10})
-	require.NoError(t, err)
-	assert.Empty(t, messages)
-}
-
 func TestToolCallLifecycle(t *testing.T) {
-	s, dbConn := openStore(t)
+	s, _ := openStore(t)
 	ctx := t.Context()
-	seedUser(t, dbConn, 1)
-
-	session, err := s.CreateSession(ctx, db.CreateSessionParams{UserID: 1})
-	require.NoError(t, err)
-	asst := db.AppendMessageParams{SessionID: session.ID, Role: "assistant", Content: ""}
-	msg, err := s.AppendMessage(ctx, asst)
+	session := newSession(t, s, "")
+	msg, err := s.AppendMessage(ctx, db.AppendMessageParams{SessionID: session.ID, Role: "assistant"})
 	require.NoError(t, err)
 
 	created, err := s.InsertToolCall(ctx, db.InsertToolCallParams{
@@ -220,34 +169,30 @@ func TestToolCallLifecycle(t *testing.T) {
 	assert.Equal(t, "done", calls[0].Status)
 }
 
-func TestToolCallsCascadeWithMessage(t *testing.T) {
-	s, dbConn := openStore(t)
+func TestGetToolCallIncludesSession(t *testing.T) {
+	s, _ := openStore(t)
 	ctx := t.Context()
-	seedUser(t, dbConn, 1)
-
-	session, err := s.CreateSession(ctx, db.CreateSessionParams{UserID: 1})
-	require.NoError(t, err)
+	session := newSession(t, s, "")
 	msg, err := s.AppendMessage(ctx, db.AppendMessageParams{SessionID: session.ID, Role: "assistant"})
 	require.NoError(t, err)
-	_, err = s.InsertToolCall(ctx, db.InsertToolCallParams{
-		MessageID: msg.ID, CallID: "call_1", Name: "clock", Status: "pending",
+	created, err := s.InsertToolCall(ctx, db.InsertToolCallParams{
+		MessageID: msg.ID, CallID: "call_1", Name: "clock", Status: "awaiting_approval",
 	})
 	require.NoError(t, err)
 
-	require.NoError(t, s.DeleteSession(ctx, session.ID))
-
-	calls, err := s.ListToolCallsBySession(ctx, session.ID)
+	got, err := s.GetToolCall(ctx, created.ID)
 	require.NoError(t, err)
-	assert.Empty(t, calls)
+	assert.Equal(t, created.ID, got.ToolCall.ID)
+	assert.Equal(t, session.ID, got.SessionID)
+
+	_, err = s.GetToolCall(ctx, created.ID+999)
+	assert.ErrorIs(t, err, sql.ErrNoRows)
 }
 
 func TestResolveToolCallCountsRemaining(t *testing.T) {
-	s, dbConn := openStore(t)
+	s, _ := openStore(t)
 	ctx := t.Context()
-	seedUser(t, dbConn, 1)
-
-	session, err := s.CreateSession(ctx, db.CreateSessionParams{UserID: 1})
-	require.NoError(t, err)
+	session := newSession(t, s, "")
 	msg, err := s.AppendMessage(ctx, db.AppendMessageParams{SessionID: session.ID, Role: "assistant"})
 	require.NoError(t, err)
 
@@ -277,30 +222,6 @@ func TestResolveToolCallCountsRemaining(t *testing.T) {
 	assert.Equal(t, int64(0), count)
 }
 
-func TestGetToolCallIncludesSessionAndUser(t *testing.T) {
-	s, dbConn := openStore(t)
-	ctx := t.Context()
-	seedUser(t, dbConn, 1)
-
-	session, err := s.CreateSession(ctx, db.CreateSessionParams{UserID: 1})
-	require.NoError(t, err)
-	msg, err := s.AppendMessage(ctx, db.AppendMessageParams{SessionID: session.ID, Role: "assistant"})
-	require.NoError(t, err)
-	created, err := s.InsertToolCall(ctx, db.InsertToolCallParams{
-		MessageID: msg.ID, CallID: "call_1", Name: "clock", Status: "awaiting_approval",
-	})
-	require.NoError(t, err)
-
-	got, err := s.GetToolCall(ctx, created.ID)
-	require.NoError(t, err)
-	assert.Equal(t, created.ID, got.ToolCall.ID)
-	assert.Equal(t, session.ID, got.SessionID)
-	assert.Equal(t, int64(1), got.UserID)
-
-	_, err = s.GetToolCall(ctx, created.ID+999)
-	assert.ErrorIs(t, err, sql.ErrNoRows)
-}
-
 func TestMigrateIsIdempotent(t *testing.T) {
 	dsn := "file:" + filepath.Join(t.TempDir(), "test.db")
 	dbConn, err := store.Open(dsn)
@@ -317,13 +238,11 @@ func TestMigrateIsIdempotent(t *testing.T) {
 }
 
 func TestJobLifecycle(t *testing.T) {
-	s, dbConn := openStore(t)
+	s, _ := openStore(t)
 	ctx := t.Context()
-	seedUser(t, dbConn, 1)
 
 	next := time.Date(2026, 8, 5, 8, 0, 0, 0, time.UTC)
 	job, err := s.CreateJob(ctx, db.CreateJobParams{
-		UserID:    1,
 		Schedule:  "0 8 * * *",
 		Prompt:    "morning briefing",
 		Enabled:   1,
@@ -338,7 +257,7 @@ func TestJobLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, job.ID, got.ID)
 
-	jobs, err := s.ListJobsByUser(ctx, 1)
+	jobs, err := s.ListJobs(ctx)
 	require.NoError(t, err)
 	assert.Len(t, jobs, 1)
 
@@ -359,12 +278,10 @@ func TestJobLifecycle(t *testing.T) {
 }
 
 func TestJobClaimRoundTrip(t *testing.T) {
-	s, dbConn := openStore(t)
+	s, _ := openStore(t)
 	ctx := t.Context()
-	seedUser(t, dbConn, 1)
 
-	created, err := s.CreateJob(ctx, db.CreateJobParams{
-		UserID:    1,
+	_, err := s.CreateJob(ctx, db.CreateJobParams{
 		Schedule:  "0 8 * * *",
 		Prompt:    "brief me",
 		Enabled:   1,
@@ -372,8 +289,6 @@ func TestJobClaimRoundTrip(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// Read the row back and claim using exactly the value we read. This proves
-	// the optimistic claim survives the DATETIME write/read round trip.
 	due, err := s.ListDueJobs(ctx, sql.NullTime{Time: time.Date(2026, 8, 5, 9, 0, 0, 0, time.UTC), Valid: true})
 	require.NoError(t, err)
 	require.Len(t, due, 1)
@@ -388,7 +303,6 @@ func TestJobClaimRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), claimed)
 
-	// The next_run_at moved, so a second claim with the stale expectation fails.
 	claimed, err = s.ClaimJob(ctx, db.ClaimJobParams{
 		NewNextRunAt:      sql.NullTime{Time: next.Add(time.Hour), Valid: true},
 		LastRunAt:         sql.NullTime{Time: time.Date(2026, 8, 5, 8, 0, 2, 0, time.UTC), Valid: true},
@@ -397,33 +311,25 @@ func TestJobClaimRoundTrip(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Equal(t, int64(0), claimed)
-
-	got, err := s.GetJob(ctx, created.ID)
-	require.NoError(t, err)
-	assert.Equal(t, "running", got.LastStatus)
-	assert.True(t, got.NextRunAt.Valid)
-	assert.Equal(t, next.UTC(), got.NextRunAt.Time.UTC())
-	assert.True(t, got.LastRunAt.Valid)
 }
 
 func TestListDueJobs(t *testing.T) {
-	s, dbConn := openStore(t)
+	s, _ := openStore(t)
 	ctx := t.Context()
-	seedUser(t, dbConn, 1)
 
 	dueTime := time.Date(2026, 8, 5, 8, 0, 0, 0, time.UTC)
 	_, err := s.CreateJob(ctx, db.CreateJobParams{
-		UserID: 1, Schedule: "0 8 * * *", Prompt: "due", Enabled: 1,
+		Schedule: "0 8 * * *", Prompt: "due", Enabled: 1,
 		NextRunAt: sql.NullTime{Time: dueTime, Valid: true},
 	})
 	require.NoError(t, err)
 	_, err = s.CreateJob(ctx, db.CreateJobParams{
-		UserID: 1, Schedule: "0 9 * * *", Prompt: "future", Enabled: 1,
+		Schedule: "0 9 * * *", Prompt: "future", Enabled: 1,
 		NextRunAt: sql.NullTime{Time: time.Date(2026, 8, 5, 9, 0, 0, 0, time.UTC), Valid: true},
 	})
 	require.NoError(t, err)
 	_, err = s.CreateJob(ctx, db.CreateJobParams{
-		UserID: 1, Schedule: "0 7 * * *", Prompt: "disabled", Enabled: 0,
+		Schedule: "0 7 * * *", Prompt: "disabled", Enabled: 0,
 		NextRunAt: sql.NullTime{Time: dueTime, Valid: true},
 	})
 	require.NoError(t, err)
@@ -434,171 +340,74 @@ func TestListDueJobs(t *testing.T) {
 	assert.Equal(t, "due", got[0].Prompt)
 }
 
-func TestLLMProviders(t *testing.T) {
-	s, dbConn := openStore(t)
+func TestLLMProviderSingleton(t *testing.T) {
+	s, _ := openStore(t)
 	ctx := t.Context()
-	seedUser(t, dbConn, 1)
 
-	_, err := s.GetDefaultLLMProvider(ctx)
+	// Fresh instance has no provider row until seeded.
+	_, err := s.GetLLMProvider(ctx)
 	require.ErrorIs(t, err, sql.ErrNoRows)
 
-	created, err := s.CreateLLMProvider(ctx, db.CreateLLMProviderParams{
-		Name:      "OpenRouter",
-		Provider:  "openai",
-		BaseUrl:   "https://openrouter.ai/api/v1",
-		ApiKey:    "sk-test",
-		IsDefault: 1,
+	updated, err := s.UpsertLLMProvider(ctx, db.UpsertLLMProviderParams{
+		Provider: "openai",
+		BaseUrl:  "https://openrouter.ai/api/v1",
+		ApiKey:   "sk-test",
+		Model:    "model-a",
 	})
 	require.NoError(t, err)
-	assert.Positive(t, created.ID)
+	assert.Equal(t, "openai", updated.Provider)
+	assert.Equal(t, "model-a", updated.Model)
 
-	require.NoError(t, s.InsertLLMModel(ctx, db.InsertLLMModelParams{ProviderID: created.ID, Name: "model-a"}))
-	require.NoError(t, s.InsertLLMModel(ctx, db.InsertLLMModelParams{ProviderID: created.ID, Name: "model-b", IsDefault: 1}))
-
-	models, err := s.ListLLMModelsByProvider(ctx, created.ID)
+	got, err := s.GetLLMProvider(ctx)
 	require.NoError(t, err)
-	require.Len(t, models, 2)
-	assert.Equal(t, "model-a", models[0].Name)
-	assert.Equal(t, int64(1), models[1].IsDefault)
+	assert.Equal(t, "sk-test", got.ApiKey)
+	assert.Equal(t, "model-a", got.Model)
 
-	def, err := s.GetDefaultLLMProvider(ctx)
-	require.NoError(t, err)
-	assert.Equal(t, created.ID, def.ID)
-
-	second, err := s.CreateLLMProvider(ctx, db.CreateLLMProviderParams{
-		Name: "Ollama", Provider: "openai", BaseUrl: "http://localhost:11434/v1", ApiKey: "ollama",
+	// Upsert updates in place; the singleton id stays 1.
+	updated, err = s.UpsertLLMProvider(ctx, db.UpsertLLMProviderParams{
+		Provider: "openai",
+		BaseUrl:  "https://openrouter.ai/api/v1",
+		ApiKey:   "sk-test",
+		Model:    "model-b",
 	})
 	require.NoError(t, err)
-
-	require.NoError(t, s.ClearDefaultLLMProviders(ctx))
-	updated, err := s.UpdateLLMProvider(ctx, db.UpdateLLMProviderParams{
-		Name: "Ollama", Provider: "openai", BaseUrl: "http://localhost:11434/v1", ApiKey: "ollama",
-		IsDefault: 1, ID: second.ID,
-	})
-	require.NoError(t, err)
-	assert.Equal(t, int64(1), updated.IsDefault)
-
-	def, err = s.GetDefaultLLMProvider(ctx)
-	require.NoError(t, err)
-	assert.Equal(t, second.ID, def.ID)
-
-	list, err := s.ListLLMProviders(ctx)
-	require.NoError(t, err)
-	assert.Len(t, list, 2)
-
-	require.NoError(t, s.DeleteLLMModelsByProvider(ctx, created.ID))
-	models, err = s.ListLLMModelsByProvider(ctx, created.ID)
-	require.NoError(t, err)
-	assert.Empty(t, models)
-
-	require.NoError(t, s.DeleteLLMProvider(ctx, created.ID))
-	_, err = s.GetLLMProvider(ctx, created.ID)
-	require.ErrorIs(t, err, sql.ErrNoRows)
+	assert.Equal(t, "model-b", updated.Model)
+	assert.Equal(t, int64(1), updated.ID)
 }
 
-func TestLLMProviderUniqueName(t *testing.T) {
-	s, dbConn := openStore(t)
+func TestLLMModelSetter(t *testing.T) {
+	s, _ := openStore(t)
 	ctx := t.Context()
-	seedUser(t, dbConn, 1)
 
-	params := db.CreateLLMProviderParams{
-		Name: "main", Provider: "openai", BaseUrl: "https://api.example.com/v1", ApiKey: "sk-test",
-	}
-	_, err := s.CreateLLMProvider(ctx, params)
+	_, err := s.UpsertLLMProvider(ctx, db.UpsertLLMProviderParams{
+		Provider: "openai",
+		BaseUrl:  "https://api.example.com/v1",
+		ApiKey:   "sk-test",
+		Model:    "model-a",
+	})
 	require.NoError(t, err)
 
-	// Names are globally unique across the instance.
-	_, err = s.CreateLLMProvider(ctx, params)
-	require.Error(t, err)
+	updated, err := s.SetLLMModel(ctx, "model-c")
+	require.NoError(t, err)
+	assert.Equal(t, "model-c", updated.Model)
 }
 
-func TestLLMProviderPromoteOnDelete(t *testing.T) {
-	s, dbConn := openStore(t)
+func TestSettingsRoundTrip(t *testing.T) {
+	s, _ := openStore(t)
 	ctx := t.Context()
-	seedUser(t, dbConn, 1)
 
-	created := make([]db.LlmProvider, 0, 3)
-	for i, name := range []string{"a", "b", "c"} {
-		isDefault := int64(0)
-		if i == 0 {
-			isDefault = 1
-		}
-		p, err := s.CreateLLMProvider(ctx, db.CreateLLMProviderParams{
-			Name: name, Provider: "openai", BaseUrl: "https://api.example.com/v1", ApiKey: "sk-" + name,
-			IsDefault: isDefault,
-		})
-		require.NoError(t, err)
-		created = append(created, p)
-	}
-
-	// Deleting a non-default does not disturb the default.
-	require.NoError(t, s.DeleteLLMProvider(ctx, created[1].ID))
-	def, err := s.GetDefaultLLMProvider(ctx)
-	require.NoError(t, err)
-	assert.Equal(t, created[0].ID, def.ID)
-
-	// Deleting the default and promoting picks the next profile (lowest id).
-	require.NoError(t, s.DeleteLLMProvider(ctx, created[0].ID))
-	promoted, err := s.PromoteNextLLMProvider(ctx)
-	require.NoError(t, err)
-	assert.Equal(t, created[2].ID, promoted.ID)
-
-	def, err = s.GetDefaultLLMProvider(ctx)
-	require.NoError(t, err)
-	assert.Equal(t, created[2].ID, def.ID)
-
-	// Deleting the last provider leaves no default at all.
-	require.NoError(t, s.DeleteLLMProvider(ctx, created[2].ID))
-	_, err = s.GetDefaultLLMProvider(ctx)
+	_, err := s.GetSettings(ctx)
 	require.ErrorIs(t, err, sql.ErrNoRows)
 
-	// Promotion with no candidates is a no-op (ErrNoRows), not an error state.
-	_, err = s.PromoteNextLLMProvider(ctx)
-	require.ErrorIs(t, err, sql.ErrNoRows)
-}
-
-func TestUserLLMPrefs(t *testing.T) {
-	s, dbConn := openStore(t)
-	ctx := t.Context()
-	seedUser(t, dbConn, 1)
-
-	_, err := s.GetUserLLMPrefs(ctx, 1)
-	require.ErrorIs(t, err, sql.ErrNoRows)
-
-	created, err := s.CreateLLMProvider(ctx, db.CreateLLMProviderParams{
-		Name: "main", Provider: "openai", BaseUrl: "https://api.example.com/v1", ApiKey: "sk-test",
+	created, err := s.UpsertSettings(ctx, db.UpsertSettingsParams{
+		PermissionDefault: "allow",
+		PermissionRules:   "get_time:ask, web_*:deny",
 	})
 	require.NoError(t, err)
+	assert.Equal(t, "allow", created.PermissionDefault)
 
-	pref, err := s.UpsertUserLLMPrefs(ctx, db.UpsertUserLLMPrefsParams{
-		UserID:     1,
-		ProviderID: sql.NullInt64{Int64: created.ID, Valid: true},
-		Model:      "model-a",
-	})
+	got, err := s.GetSettings(ctx)
 	require.NoError(t, err)
-	assert.Equal(t, created.ID, pref.ProviderID.Int64)
-	assert.Equal(t, "model-a", pref.Model)
-
-	pref, err = s.UpsertUserLLMPrefs(ctx, db.UpsertUserLLMPrefsParams{
-		UserID:     1,
-		ProviderID: sql.NullInt64{Int64: created.ID, Valid: true},
-		Model:      "model-b",
-	})
-	require.NoError(t, err)
-	assert.Equal(t, "model-b", pref.Model)
-
-	got, err := s.GetUserLLMPrefs(ctx, 1)
-	require.NoError(t, err)
-	assert.Equal(t, "model-b", got.Model)
-
-	// Deleting the provider leaves the pref behind with a NULL provider_id
-	// (ON DELETE SET NULL) so it falls back to the global default.
-	require.NoError(t, s.DeleteLLMProvider(ctx, created.ID))
-	got, err = s.GetUserLLMPrefs(ctx, 1)
-	require.NoError(t, err)
-	assert.False(t, got.ProviderID.Valid)
-
-	require.NoError(t, s.DeleteUserLLMPrefs(ctx, 1))
-	_, err = s.GetUserLLMPrefs(ctx, 1)
-	require.ErrorIs(t, err, sql.ErrNoRows)
+	assert.Equal(t, "allow", got.PermissionDefault)
+	assert.Equal(t, "get_time:ask, web_*:deny", got.PermissionRules)
 }

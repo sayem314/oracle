@@ -1,6 +1,6 @@
 -- name: CreateSession :one
-INSERT INTO sessions (user_id, title)
-VALUES (?, ?)
+INSERT INTO sessions (title)
+VALUES (?)
 RETURNING *;
 
 -- name: GetSession :one
@@ -11,7 +11,6 @@ WHERE id = ?;
 -- name: ListSessions :many
 SELECT *
 FROM sessions
-WHERE user_id = ?
 ORDER BY updated_at DESC, id DESC
 LIMIT ? OFFSET ?;
 

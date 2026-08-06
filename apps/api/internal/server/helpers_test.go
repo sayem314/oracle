@@ -3,7 +3,6 @@ package server_test
 import (
 	"database/sql"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -61,11 +60,10 @@ func newTestAppFull(t *testing.T, provider llm.Provider, tools tool.Executor, pe
 	s := store.New(dbConn)
 	resolver := &chat.LLMResolver{Store: s, Default: provider}
 	engine := &chat.Engine{
-		Store:              s,
-		LLM:                resolver,
-		Tools:              tools,
-		Permissions:        perms,
-		PermissionResolver: &chat.PermissionOverlay{Store: s},
+		Store:       s,
+		LLM:         resolver,
+		Tools:       tools,
+		Permissions: perms,
 	}
 	app := server.New(server.Deps{Store: s, Auth: a, Chat: engine})
 	return app, s, dbConn
@@ -97,42 +95,4 @@ func signUp(t *testing.T, app *fiber.App, dbConn *sql.DB, email string) (string,
 	var userID int64
 	require.NoError(t, dbConn.QueryRow("SELECT id FROM auth_users WHERE email = ?", email).Scan(&userID))
 	return cookie, userID
-}
-
-// signIn authenticates an existing user through /auth/signin/credential and
-// returns the session cookie. Sign-up locks after the first user, so tests
-// that need a second authenticated user create it and sign in instead.
-func signIn(t *testing.T, app *fiber.App, email, password string) string {
-	t.Helper()
-
-	body, err := json.Marshal(map[string]any{"credential": email, "password": password})
-	require.NoError(t, err)
-
-	req := httptest.NewRequest(http.MethodPost, "/auth/signin/credential", strings.NewReader(string(body)))
-	req.Header.Set("Content-Type", "application/json")
-	res, err := app.Test(req, fiber.TestConfig{Timeout: 0})
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = res.Body.Close() })
-	require.Equal(t, http.StatusOK, res.StatusCode)
-
-	var cookie string
-	for _, c := range res.Cookies() {
-		if c.Name == "limen_session" {
-			cookie = c.Name + "=" + c.Value
-		}
-	}
-	require.NotEmpty(t, cookie, "sign-in did not set a session cookie")
-	return cookie
-}
-
-// seedUser inserts an auth_users row with a fixed id, bypassing the sign-up
-// gate, so tests can build data owned by a user other than the signed-in one.
-func seedUser(t *testing.T, dbConn *sql.DB, id int64) {
-	t.Helper()
-
-	_, err := dbConn.Exec(
-		"INSERT INTO auth_users (id, email) VALUES (?, ?)",
-		id, fmt.Sprintf("seeded%d@example.com", id),
-	)
-	require.NoError(t, err)
 }

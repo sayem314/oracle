@@ -19,7 +19,6 @@ type jobResponse struct {
 	Schedule   string     `json:"schedule"`
 	Prompt     string     `json:"prompt"`
 	Enabled    bool       `json:"enabled"`
-	ProviderID int64      `json:"provider_id"`
 	Model      string     `json:"model"`
 	LastRunAt  *time.Time `json:"last_run_at"`
 	LastStatus string     `json:"last_status"`
@@ -50,9 +49,6 @@ func jobToResponse(j db.Job) jobResponse {
 	if j.SessionID.Valid {
 		resp.SessionID = &j.SessionID.Int64
 	}
-	if j.ProviderID.Valid {
-		resp.ProviderID = j.ProviderID.Int64
-	}
 	if j.LastRunAt.Valid {
 		resp.LastRunAt = &j.LastRunAt.Time
 	}
@@ -64,8 +60,7 @@ func jobToResponse(j db.Job) jobResponse {
 
 func newListJobsHandler(deps Deps) fiber.Handler {
 	return func(c fiber.Ctx) error {
-		userID := c.Locals(userIDKey{}).(int64)
-		jobs, err := deps.Store.ListJobsByUser(c.Context(), userID)
+		jobs, err := deps.Store.ListJobs(c.Context())
 		if err != nil {
 			return err
 		}
@@ -78,11 +73,10 @@ func newListJobsHandler(deps Deps) fiber.Handler {
 }
 
 type createJobRequest struct {
-	Schedule   string `json:"schedule"`
-	Prompt     string `json:"prompt"`
-	SessionID  *int64 `json:"session_id"`
-	ProviderID int64  `json:"provider_id"`
-	Model      string `json:"model"`
+	Schedule  string `json:"schedule"`
+	Prompt    string `json:"prompt"`
+	SessionID *int64 `json:"session_id"`
+	Model     string `json:"model"`
 }
 
 func newCreateJobHandler(deps Deps) fiber.Handler {
@@ -103,7 +97,6 @@ func newCreateJobHandler(deps Deps) fiber.Handler {
 		}
 
 		ctx := c.Context()
-		userID := c.Locals(userIDKey{}).(int64)
 
 		var sessionID sql.NullInt64
 		if req.SessionID != nil {
@@ -114,9 +107,6 @@ func newCreateJobHandler(deps Deps) fiber.Handler {
 				}
 				return err
 			}
-			if session.UserID != userID {
-				return fiber.NewError(fiber.StatusNotFound, "session not found")
-			}
 			sessionID = sql.NullInt64{Int64: session.ID, Valid: true}
 		}
 
@@ -125,26 +115,13 @@ func newCreateJobHandler(deps Deps) fiber.Handler {
 			return err
 		}
 
-		model := strings.TrimSpace(req.Model)
-		var providerID sql.NullInt64
-		if req.ProviderID != 0 {
-			if err := checkProviderModel(deps, c, req.ProviderID, model); err != nil {
-				return err
-			}
-			providerID = sql.NullInt64{Int64: req.ProviderID, Valid: true}
-		} else {
-			model = ""
-		}
-
 		job, err := deps.Store.CreateJob(ctx, db.CreateJobParams{
-			UserID:     userID,
-			SessionID:  sessionID,
-			Schedule:   schedule,
-			Prompt:     prompt,
-			Enabled:    1,
-			NextRunAt:  sql.NullTime{Time: next, Valid: true},
-			ProviderID: providerID,
-			Model:      model,
+			SessionID: sessionID,
+			Schedule:  schedule,
+			Prompt:    prompt,
+			Enabled:   1,
+			NextRunAt: sql.NullTime{Time: next, Valid: true},
+			Model:     strings.TrimSpace(req.Model),
 		})
 		if err != nil {
 			return err
@@ -155,11 +132,10 @@ func newCreateJobHandler(deps Deps) fiber.Handler {
 }
 
 type updateJobRequest struct {
-	Schedule   *string `json:"schedule"`
-	Prompt     *string `json:"prompt"`
-	Enabled    *bool   `json:"enabled"`
-	ProviderID *int64  `json:"provider_id"`
-	Model      *string `json:"model"`
+	Schedule *string `json:"schedule"`
+	Prompt   *string `json:"prompt"`
+	Enabled  *bool   `json:"enabled"`
+	Model    *string `json:"model"`
 }
 
 func newUpdateJobHandler(deps Deps) fiber.Handler {
@@ -175,7 +151,6 @@ func newUpdateJobHandler(deps Deps) fiber.Handler {
 		}
 
 		ctx := c.Context()
-		userID := c.Locals(userIDKey{}).(int64)
 
 		job, err := deps.Store.GetJob(ctx, id)
 		if err != nil {
@@ -183,9 +158,6 @@ func newUpdateJobHandler(deps Deps) fiber.Handler {
 				return fiber.NewError(fiber.StatusNotFound, "job not found")
 			}
 			return err
-		}
-		if job.UserID != userID {
-			return fiber.NewError(fiber.StatusNotFound, "job not found")
 		}
 
 		schedule := job.Schedule
@@ -214,20 +186,6 @@ func newUpdateJobHandler(deps Deps) fiber.Handler {
 			model = strings.TrimSpace(*req.Model)
 		}
 
-		providerID := job.ProviderID
-		if req.ProviderID != nil {
-			if *req.ProviderID == 0 {
-				providerID = sql.NullInt64{}
-			} else {
-				providerID = sql.NullInt64{Int64: *req.ProviderID, Valid: true}
-			}
-		}
-		if !providerID.Valid {
-			model = ""
-		} else if err := checkProviderModel(deps, c, providerID.Int64, model); err != nil {
-			return err
-		}
-
 		var enabledInt int64
 		var next sql.NullTime
 		if enabled {
@@ -240,13 +198,12 @@ func newUpdateJobHandler(deps Deps) fiber.Handler {
 		}
 
 		updated, err := deps.Store.UpdateJob(ctx, db.UpdateJobParams{
-			Schedule:   schedule,
-			Prompt:     prompt,
-			Enabled:    enabledInt,
-			NextRunAt:  next,
-			ProviderID: providerID,
-			Model:      model,
-			ID:         job.ID,
+			Schedule:  schedule,
+			Prompt:    prompt,
+			Enabled:   enabledInt,
+			NextRunAt: next,
+			Model:     model,
+			ID:        job.ID,
 		})
 		if err != nil {
 			return err
@@ -264,7 +221,6 @@ func newDeleteJobHandler(deps Deps) fiber.Handler {
 		}
 
 		ctx := c.Context()
-		userID := c.Locals(userIDKey{}).(int64)
 
 		job, err := deps.Store.GetJob(ctx, id)
 		if err != nil {
@@ -272,9 +228,6 @@ func newDeleteJobHandler(deps Deps) fiber.Handler {
 				return fiber.NewError(fiber.StatusNotFound, "job not found")
 			}
 			return err
-		}
-		if job.UserID != userID {
-			return fiber.NewError(fiber.StatusNotFound, "job not found")
 		}
 
 		if err := deps.Store.DeleteJob(ctx, job.ID); err != nil {

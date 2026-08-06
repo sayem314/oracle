@@ -2,8 +2,6 @@ package chat
 
 import (
 	"context"
-	"database/sql"
-	"errors"
 	"fmt"
 	"strings"
 
@@ -85,51 +83,7 @@ func (DiscardSink) Send(string, any) error { return nil }
 
 // Resolver picks the LLM provider for a run.
 type Resolver interface {
-	Resolve(ctx context.Context, userID, providerID int64, model string) (llm.Provider, error)
-}
-
-// PermissionOverrides is the per-user part of a ruleset. A nil Default means
-// inherit the global fallback verdict; Rules are appended after the global
-// rules.
-type PermissionOverrides struct {
-	Default *permission.Verdict
-	Rules   []permission.Rule
-}
-
-// PermissionResolver picks the per-user permission overrides for a run.
-// Resolve must return zero overrides when the user has none stored.
-type PermissionResolver interface {
-	Resolve(ctx context.Context, userID int64) (PermissionOverrides, error)
-}
-
-// PermissionOverlay resolves permission overrides from the store; users
-// without a row inherit the engine's global ruleset untouched.
-type PermissionOverlay struct {
-	Store store.Store
-}
-
-func (o *PermissionOverlay) Resolve(ctx context.Context, userID int64) (PermissionOverrides, error) {
-	row, err := o.Store.GetUserPermissions(ctx, userID)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return PermissionOverrides{}, nil
-		}
-		return PermissionOverrides{}, err
-	}
-
-	var overrides PermissionOverrides
-	if row.DefaultVerdict.Valid {
-		v := permission.Verdict(row.DefaultVerdict.String)
-		overrides.Default = &v
-	}
-	if row.Rules != "" {
-		rules, err := permission.ParseRules(row.Rules)
-		if err != nil {
-			return PermissionOverrides{}, fmt.Errorf("parse stored rules for user %d: %w", userID, err)
-		}
-		overrides.Rules = rules
-	}
-	return overrides, nil
+	Resolve(ctx context.Context, model string) (llm.Provider, error)
 }
 
 // Engine drives the model->tool->model loop shared by the chat and approval
@@ -139,9 +93,6 @@ type Engine struct {
 	LLM         Resolver
 	Tools       tool.Executor
 	Permissions *permission.Ruleset
-	// PermissionResolver overlays the user's overrides on Permissions per
-	// run; nil means every run uses the global ruleset.
-	PermissionResolver PermissionResolver
 	// Compaction controls context condensation and tool-output truncation when
 	// the assembled history grows large. The zero value disables both.
 	Compaction CompactionConfig
@@ -156,30 +107,21 @@ func (e *Engine) AsHeadless() *Engine {
 	return &c
 }
 
+// SetPermissions swaps the global ruleset, used when Settings save new rules.
+func (e *Engine) SetPermissions(rules *permission.Ruleset) {
+	e.Permissions = rules
+}
+
 // Run drives rounds until the model produces a final answer, tool approval
 // pauses the run, or the round limit trips. req.Messages holds the
 // conversation so far and is extended each round. The provider is resolved
-// once for userID and providerID (0 = the user's default) and reused across
-// rounds.
-func (e *Engine) Run(ctx context.Context, sink Sink, sessionID, userID, providerID int64, req llm.Request) error {
-	provider, err := e.LLM.Resolve(ctx, userID, providerID, req.Model)
+// once for the run and reused across rounds.
+func (e *Engine) Run(ctx context.Context, sink Sink, sessionID int64, req llm.Request) error {
+	provider, err := e.LLM.Resolve(ctx, req.Model)
 	if err != nil {
 		return err
 	}
 	rules := e.Permissions
-	if e.PermissionResolver != nil {
-		overrides, err := e.PermissionResolver.Resolve(ctx, userID)
-		if err != nil {
-			return fmt.Errorf("resolve permissions: %w", err)
-		}
-
-		// A nil override inherits the global default.
-		var defaultVerdict permission.Verdict
-		if overrides.Default != nil {
-			defaultVerdict = *overrides.Default
-		}
-		rules = e.Permissions.WithUserOverrides(overrides.Default != nil, defaultVerdict, overrides.Rules)
-	}
 	tools := e.Tools.Definitions()
 
 	if e.Compaction.Enabled() {

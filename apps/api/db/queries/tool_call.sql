@@ -14,10 +14,9 @@ SET status = ?
 WHERE id = ?;
 
 -- name: GetToolCall :one
-SELECT sqlc.embed(tc), m.session_id, s.user_id
+SELECT sqlc.embed(tc), m.session_id
 FROM tool_calls tc
 JOIN messages m ON m.id = tc.message_id
-JOIN sessions s ON s.id = m.session_id
 WHERE tc.id = ?;
 
 -- name: CountPendingApprovalsBySession :one

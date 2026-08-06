@@ -51,7 +51,6 @@ func newApprovalHandler(deps Deps) fiber.Handler {
 		}
 
 		ctx := c.Context()
-		userID := c.Locals(userIDKey{}).(int64)
 
 		call, err := deps.Store.GetToolCall(ctx, req.ID)
 		if err != nil {
@@ -59,9 +58,6 @@ func newApprovalHandler(deps Deps) fiber.Handler {
 				return fiber.NewError(fiber.StatusNotFound, "tool call not found")
 			}
 			return err
-		}
-		if call.UserID != userID {
-			return fiber.NewError(fiber.StatusNotFound, "tool call not found")
 		}
 		if call.ToolCall.Status != chat.StatusAwaitingApproval {
 			return fiber.NewError(fiber.StatusConflict, "tool call is not awaiting approval")
@@ -116,8 +112,7 @@ func streamApproval(deps Deps, c fiber.Ctx, s *sse.Stream) error {
 	if err != nil {
 		return sendChatError(s, err)
 	}
-	userID := c.Locals(userIDKey{}).(int64)
-	if err := deps.Chat.Run(ctx, sink, call.SessionID, userID, 0, llm.Request{Messages: history}); err != nil {
+	if err := deps.Chat.Run(ctx, sink, call.SessionID, llm.Request{Messages: history}); err != nil {
 		return sendChatError(s, err)
 	}
 	return nil

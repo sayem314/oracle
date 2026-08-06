@@ -10,22 +10,16 @@ import (
 )
 
 const createSession = `-- name: CreateSession :one
-INSERT INTO sessions (user_id, title)
-VALUES (?, ?)
-RETURNING id, user_id, title, summary, created_at, updated_at
+INSERT INTO sessions (title)
+VALUES (?)
+RETURNING id, title, summary, created_at, updated_at
 `
 
-type CreateSessionParams struct {
-	UserID int64
-	Title  string
-}
-
-func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) (Session, error) {
-	row := q.db.QueryRowContext(ctx, createSession, arg.UserID, arg.Title)
+func (q *Queries) CreateSession(ctx context.Context, title string) (Session, error) {
+	row := q.db.QueryRowContext(ctx, createSession, title)
 	var i Session
 	err := row.Scan(
 		&i.ID,
-		&i.UserID,
 		&i.Title,
 		&i.Summary,
 		&i.CreatedAt,
@@ -45,7 +39,7 @@ func (q *Queries) DeleteSession(ctx context.Context, id int64) error {
 }
 
 const getSession = `-- name: GetSession :one
-SELECT id, user_id, title, summary, created_at, updated_at
+SELECT id, title, summary, created_at, updated_at
 FROM sessions
 WHERE id = ?
 `
@@ -55,7 +49,6 @@ func (q *Queries) GetSession(ctx context.Context, id int64) (Session, error) {
 	var i Session
 	err := row.Scan(
 		&i.ID,
-		&i.UserID,
 		&i.Title,
 		&i.Summary,
 		&i.CreatedAt,
@@ -65,21 +58,19 @@ func (q *Queries) GetSession(ctx context.Context, id int64) (Session, error) {
 }
 
 const listSessions = `-- name: ListSessions :many
-SELECT id, user_id, title, summary, created_at, updated_at
+SELECT id, title, summary, created_at, updated_at
 FROM sessions
-WHERE user_id = ?
 ORDER BY updated_at DESC, id DESC
 LIMIT ? OFFSET ?
 `
 
 type ListSessionsParams struct {
-	UserID int64
 	Limit  int64
 	Offset int64
 }
 
 func (q *Queries) ListSessions(ctx context.Context, arg ListSessionsParams) ([]Session, error) {
-	rows, err := q.db.QueryContext(ctx, listSessions, arg.UserID, arg.Limit, arg.Offset)
+	rows, err := q.db.QueryContext(ctx, listSessions, arg.Limit, arg.Offset)
 	if err != nil {
 		return nil, err
 	}
@@ -89,7 +80,6 @@ func (q *Queries) ListSessions(ctx context.Context, arg ListSessionsParams) ([]S
 		var i Session
 		if err := rows.Scan(
 			&i.ID,
-			&i.UserID,
 			&i.Title,
 			&i.Summary,
 			&i.CreatedAt,

@@ -3,7 +3,6 @@ package auth
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -43,18 +42,6 @@ type Error struct {
 
 func (e *Error) Error() string { return e.Message }
 
-func toAuthError(err error) error {
-	var le *limen.LimenError
-	if errors.As(err, &le) {
-		status := le.Status()
-		if status == http.StatusUnprocessableEntity {
-			status = http.StatusBadRequest
-		}
-		return &Error{Status: status, Message: le.Error()}
-	}
-	return err
-}
-
 // Auth is the seam oracle depends on. Limen is the only implementation for
 // now, but keeping it behind an interface lets tests swap in fakes.
 type Auth interface {
@@ -62,11 +49,7 @@ type Auth interface {
 	UserID(r *http.Request) (int64, error)
 	HasUsers(ctx context.Context) (bool, error)
 	Role(ctx context.Context, userID int64) (string, error)
-	CreateUser(ctx context.Context, email, password string) (UserInfo, error)
 	GetUser(ctx context.Context, userID int64) (UserInfo, error)
-	ListUsers(ctx context.Context) ([]UserInfo, error)
-	ResetPassword(ctx context.Context, userID int64, newPassword string) (UserInfo, error)
-	DeleteUser(ctx context.Context, userID int64) error
 }
 
 type limenAuth struct {
@@ -158,88 +141,7 @@ func (a *limenAuth) Role(ctx context.Context, userID int64) (string, error) {
 	return role, nil
 }
 
-// CreateUser registers a user through Limen so the password is hashed and
-// validated by the credential-password plugin. The role is passed explicitly
-// (and wins over the sign-up hook) so admin-created users are never stamped
-// admin.
-func (a *limenAuth) CreateUser(ctx context.Context, email, password string) (UserInfo, error) {
-	res, err := a.cp.SignUpWithCredentialAndPassword(ctx, &limen.User{
-		Email:    email,
-		Password: &password,
-	}, map[string]any{roleField: RoleUser})
-	if err != nil {
-		return UserInfo{}, toAuthError(err)
-	}
-	id, err := toInt64(res.User.ID)
-	if err != nil {
-		return UserInfo{}, err
-	}
-	return a.getUser(ctx, id)
-}
-
 func (a *limenAuth) GetUser(ctx context.Context, userID int64) (UserInfo, error) {
-	return a.getUser(ctx, userID)
-}
-
-func (a *limenAuth) ListUsers(ctx context.Context) ([]UserInfo, error) {
-	rows, err := a.db.QueryContext(ctx,
-		"SELECT id, email, role, created_at FROM auth_users ORDER BY id")
-	if err != nil {
-		return nil, fmt.Errorf("list users: %w", err)
-	}
-	defer rows.Close() //nolint:errcheck
-
-	var users []UserInfo
-	for rows.Next() {
-		var u UserInfo
-		if err := rows.Scan(&u.ID, &u.Email, &u.Role, &u.CreatedAt); err != nil {
-			return nil, fmt.Errorf("scan user: %w", err)
-		}
-		users = append(users, u)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("list users: %w", err)
-	}
-	return users, nil
-}
-
-// DeleteUser removes the user; sessions, messages, and Limen auth rows cascade.
-func (a *limenAuth) DeleteUser(ctx context.Context, userID int64) error {
-	res, err := a.db.ExecContext(ctx, "DELETE FROM auth_users WHERE id = ?", userID)
-	if err != nil {
-		return fmt.Errorf("delete user: %w", err)
-	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("delete user: %w", err)
-	}
-	if n == 0 {
-		return sql.ErrNoRows
-	}
-	return nil
-}
-
-// ResetPassword sets a new password for a user without knowing the old one:
-// the plugin's reset flow generates a token in-process (no email involved,
-// verification is disabled) and applies it. Existing sessions are revoked
-// because a reset is usually a response to a lost or leaked password.
-func (a *limenAuth) ResetPassword(ctx context.Context, userID int64, newPassword string) (UserInfo, error) {
-	u, err := a.getUser(ctx, userID)
-	if err != nil {
-		return UserInfo{}, err
-	}
-
-	verification, err := a.cp.RequestPasswordReset(ctx, u.Email)
-	if err != nil {
-		return UserInfo{}, toAuthError(err)
-	}
-	if err := a.cp.ResetPassword(ctx, verification.Value, newPassword); err != nil {
-		return UserInfo{}, toAuthError(err)
-	}
-
-	if _, err := a.db.ExecContext(ctx, "DELETE FROM auth_sessions WHERE user_id = ?", userID); err != nil {
-		return UserInfo{}, fmt.Errorf("revoke sessions: %w", err)
-	}
 	return a.getUser(ctx, userID)
 }
 
