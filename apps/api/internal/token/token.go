@@ -13,10 +13,7 @@ const charsPerToken = 4
 
 // Estimate returns an approximate token count for a string.
 func Estimate(s string) int {
-	n := len(s) / charsPerToken
-	if n < 1 {
-		n = 1
-	}
+	n := max(len(s)/charsPerToken, 1)
 	return n
 }
 

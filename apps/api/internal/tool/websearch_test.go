@@ -78,11 +78,11 @@ func TestWebSearchHits(t *testing.T) {
 }
 
 func TestWebSearchCapsResults(t *testing.T) {
-	results := ""
-	for i := 0; i < 8; i++ {
-		results += `<div class="result"><h2 class="result__title"><a rel="nofollow" class="result__a" href="//ddg/l/?uddg=aHR0cHM6Ly9leGFtcGxlLmNvbS8=">Result ` + string(rune('A'+i)) + `</a></h2><a class="result__snippet">snippet</a></div>`
+	var results strings.Builder
+	for i := range 8 {
+		results.WriteString(`<div class="result"><h2 class="result__title"><a rel="nofollow" class="result__a" href="//ddg/l/?uddg=aHR0cHM6Ly9leGFtcGxlLmNvbS8=">Result ` + string(rune('A'+i)) + `</a></h2><a class="result__snippet">snippet</a></div>`)
 	}
-	srv, _ := searchHTTPServer(results)
+	srv, _ := searchHTTPServer(results.String())
 	defer srv.Close()
 
 	tl := webSearchAt(plainClient(), srv.URL)

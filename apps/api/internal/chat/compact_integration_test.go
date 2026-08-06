@@ -47,7 +47,7 @@ func TestRunCompactsAndPersistsSummary(t *testing.T) {
 	}
 
 	// Seed a long conversation so a tiny window overflows.
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		_, err := s.AppendMessage(t.Context(), db.AppendMessageParams{
 			SessionID: session.ID,
 			Role:      string(llm.RoleUser),

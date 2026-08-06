@@ -14,7 +14,7 @@ import (
 func turns(n int) []llm.Message {
 	// Interleave user + assistant like a real transcript.
 	var msgs []llm.Message
-	for i := 0; i < n; i++ {
+	for i := range n {
 		msgs = append(msgs,
 			llm.Message{Role: llm.RoleUser, Content: "user turn " + itoa(i)},
 			llm.Message{Role: llm.RoleAssistant, Content: "reply to turn " + itoa(i)},

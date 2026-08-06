@@ -137,7 +137,7 @@ func dropOldestTurns(msgs []llm.Message, n int) []llm.Message {
 
 // dropOldestTurn removes the oldest turn from msgs, returning the rest.
 func dropOldestTurn(msgs []llm.Message) []llm.Message {
-	for i := 0; i < len(msgs); i++ {
+	for i := range msgs {
 		if msgs[i].Role == llm.RoleUser && msgs[i].ToolCallID == "" {
 			return msgs[i+1:]
 		}
