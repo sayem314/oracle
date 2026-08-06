@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	"golang.org/x/net/html"
+	"github.com/PuerkitoBio/goquery"
 
 	"github.com/sayem314/oracle/apps/api/internal/llm"
 )
@@ -206,43 +206,14 @@ func webFetchExecute(client *http.Client) ExecuteFunc {
 	}
 }
 
-// htmlToText walks the token stream, keeping visible text and dropping
-// script/style/noscript blocks.
+// htmlToText extracts visible text, dropping script/style/noscript/template
+// blocks. goquery's Text() concatenates all text including hidden blocks, so
+// remove those elements first.
 func htmlToText(r io.Reader) (string, error) {
-	tok := html.NewTokenizer(r)
-	var sb strings.Builder
-	skip := 0
-	for {
-		switch tok.Next() {
-		case html.ErrorToken:
-			if errors.Is(tok.Err(), io.EOF) {
-				return sb.String(), nil
-			}
-			return sb.String(), tok.Err()
-		case html.StartTagToken:
-			name, _ := tok.TagName()
-			if isHtmlHidden(name) {
-				skip++
-			}
-		case html.EndTagToken:
-			name, _ := tok.TagName()
-			if isHtmlHidden(name) && skip > 0 {
-				skip--
-			}
-		case html.TextToken:
-			if skip == 0 {
-				sb.Write(tok.Text())
-				sb.WriteByte(' ')
-			}
-		}
+	doc, err := goquery.NewDocumentFromReader(r)
+	if err != nil {
+		return "", err
 	}
-}
-
-func isHtmlHidden(tag []byte) bool {
-	switch string(tag) {
-	case "script", "style", "noscript", "template":
-		return true
-	default:
-		return false
-	}
+	doc.Find("script,style,noscript,template").Remove()
+	return doc.Text(), nil
 }
