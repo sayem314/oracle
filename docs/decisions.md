@@ -2,6 +2,11 @@
 
 Lightweight ADRs. Latest first.
 
+## 2026-08-06: Auto-promote on default provider delete (Step 12 follow-up)
+
+- Deleting the global default profile left the instance without a default, silently falling back to the env-configured server default (the mock in dev). The delete handler now promotes the remaining profile with the lowest id via a single `PromoteNextLLMProvider` UPDATE (subquery picks the lowest-id non-default row). Deleting a non-default leaves the flag alone; deleting the last profile still leaves no default, which is the honest state (fall back to the server default) rather than inventing one.
+- Promotion is handler-level, not in `store.DeleteLLMProvider`: the store keeps doing exactly one statement per call, and the policy (what happens when the default goes away) lives with the other provider policy in the API layer.
+
 ## 2026-08-06: Gateway model listing (Step 12 follow-up)
 
 - Model lists were admin-typed comma strings, so a typo'd model only surfaced as a run-time gateway error. `POST /api/v1/llm/providers/:id/models` (admin-only) fetches the gateway's real model ids via the openai-go SDK's `Models.List` against the profile's base URL and stored key, and returns them. `llm.ListModels` is a free function, deliberately not part of the `Provider` interface: it is an admin tool, not a chat-path operation, and the chat path stays untouched.

@@ -516,6 +516,51 @@ func TestLLMProviderUniqueName(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestLLMProviderPromoteOnDelete(t *testing.T) {
+	s, dbConn := openStore(t)
+	ctx := t.Context()
+	seedUser(t, dbConn, 1)
+
+	created := make([]db.LlmProvider, 0, 3)
+	for i, name := range []string{"a", "b", "c"} {
+		isDefault := int64(0)
+		if i == 0 {
+			isDefault = 1
+		}
+		p, err := s.CreateLLMProvider(ctx, db.CreateLLMProviderParams{
+			Name: name, Provider: "openai", BaseUrl: "https://api.example.com/v1", ApiKey: "sk-" + name,
+			IsDefault: isDefault,
+		})
+		require.NoError(t, err)
+		created = append(created, p)
+	}
+
+	// Deleting a non-default does not disturb the default.
+	require.NoError(t, s.DeleteLLMProvider(ctx, created[1].ID))
+	def, err := s.GetDefaultLLMProvider(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, created[0].ID, def.ID)
+
+	// Deleting the default and promoting picks the next profile (lowest id).
+	require.NoError(t, s.DeleteLLMProvider(ctx, created[0].ID))
+	promoted, err := s.PromoteNextLLMProvider(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, created[2].ID, promoted.ID)
+
+	def, err = s.GetDefaultLLMProvider(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, created[2].ID, def.ID)
+
+	// Deleting the last provider leaves no default at all.
+	require.NoError(t, s.DeleteLLMProvider(ctx, created[2].ID))
+	_, err = s.GetDefaultLLMProvider(ctx)
+	require.ErrorIs(t, err, sql.ErrNoRows)
+
+	// Promotion with no candidates is a no-op (ErrNoRows), not an error state.
+	_, err = s.PromoteNextLLMProvider(ctx)
+	require.ErrorIs(t, err, sql.ErrNoRows)
+}
+
 func TestUserLLMPrefs(t *testing.T) {
 	s, dbConn := openStore(t)
 	ctx := t.Context()

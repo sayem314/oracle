@@ -33,6 +33,18 @@ WHERE is_default = 1;
 DELETE FROM llm_providers
 WHERE id = ?;
 
+-- name: PromoteNextLLMProvider :one
+UPDATE llm_providers
+SET is_default = 1, updated_at = CURRENT_TIMESTAMP
+WHERE id = (
+	SELECT id
+	FROM llm_providers
+	WHERE is_default = 0
+	ORDER BY id
+	LIMIT 1
+)
+RETURNING *;
+
 -- name: ListLLMModelsByProvider :many
 SELECT *
 FROM llm_models

@@ -48,6 +48,7 @@ type Store interface {
 	UpdateLLMProvider(ctx context.Context, arg db.UpdateLLMProviderParams) (db.LlmProvider, error)
 	ClearDefaultLLMProviders(ctx context.Context) error
 	DeleteLLMProvider(ctx context.Context, id int64) error
+	PromoteNextLLMProvider(ctx context.Context) (db.LlmProvider, error)
 	ListLLMModelsByProvider(ctx context.Context, providerID int64) ([]db.LlmModel, error)
 	InsertLLMModel(ctx context.Context, arg db.InsertLLMModelParams) error
 	DeleteLLMModelsByProvider(ctx context.Context, providerID int64) error

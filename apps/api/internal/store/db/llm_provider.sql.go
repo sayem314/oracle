@@ -209,6 +209,35 @@ func (q *Queries) ListLLMProviders(ctx context.Context) ([]LlmProvider, error) {
 	return items, nil
 }
 
+const promoteNextLLMProvider = `-- name: PromoteNextLLMProvider :one
+UPDATE llm_providers
+SET is_default = 1, updated_at = CURRENT_TIMESTAMP
+WHERE id = (
+	SELECT id
+	FROM llm_providers
+	WHERE is_default = 0
+	ORDER BY id
+	LIMIT 1
+)
+RETURNING id, name, provider, base_url, api_key, is_default, created_at, updated_at
+`
+
+func (q *Queries) PromoteNextLLMProvider(ctx context.Context) (LlmProvider, error) {
+	row := q.db.QueryRowContext(ctx, promoteNextLLMProvider)
+	var i LlmProvider
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Provider,
+		&i.BaseUrl,
+		&i.ApiKey,
+		&i.IsDefault,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const updateLLMProvider = `-- name: UpdateLLMProvider :one
 UPDATE llm_providers
 SET name = ?, provider = ?, base_url = ?, api_key = ?, is_default = ?, updated_at = CURRENT_TIMESTAMP

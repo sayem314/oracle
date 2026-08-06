@@ -1,6 +1,7 @@
 package server_test
 
 import (
+	"database/sql"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -238,6 +239,37 @@ func TestProviderDelete(t *testing.T) {
 
 	res = doProviderRequest(t, app, http.MethodDelete, "/api/v1/llm/providers/"+itoa(created.ID), cookie, nil)
 	assert.Equal(t, http.StatusNotFound, res.StatusCode)
+}
+
+func TestProviderDeletePromotesNext(t *testing.T) {
+	app, s, dbConn := newTestApp(t, llm.NewMock())
+	cookie, _ := signUp(t, app, dbConn, "owner@example.com")
+
+	res := doProviderRequest(t, app, http.MethodPost, "/api/v1/llm/providers", cookie, validProviderPayload("router"))
+	require.Equal(t, http.StatusCreated, res.StatusCode)
+	first := decodeProvider(t, res)
+	assert.True(t, first.Default)
+
+	res = doProviderRequest(t, app, http.MethodPost, "/api/v1/llm/providers", cookie, validProviderPayload("local"))
+	require.Equal(t, http.StatusCreated, res.StatusCode)
+	second := decodeProvider(t, res)
+	assert.False(t, second.Default)
+
+	// Deleting the default promotes the remaining profile.
+	res = doProviderRequest(t, app, http.MethodDelete, "/api/v1/llm/providers/"+itoa(first.ID), cookie, nil)
+	require.Equal(t, http.StatusNoContent, res.StatusCode)
+
+	def, err := s.GetDefaultLLMProvider(t.Context())
+	require.NoError(t, err)
+	assert.Equal(t, second.ID, def.ID)
+
+	// Deleting the last provider leaves the instance without a default (the
+	// server default from env config takes over).
+	res = doProviderRequest(t, app, http.MethodDelete, "/api/v1/llm/providers/"+itoa(second.ID), cookie, nil)
+	require.Equal(t, http.StatusNoContent, res.StatusCode)
+
+	_, err = s.GetDefaultLLMProvider(t.Context())
+	require.ErrorIs(t, err, sql.ErrNoRows)
 }
 
 func TestProvidersAdminOnly(t *testing.T) {

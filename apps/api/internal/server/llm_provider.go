@@ -253,6 +253,13 @@ func newDeleteLLMProviderHandler(deps Deps) fiber.Handler {
 		if err := deps.Store.DeleteLLMProvider(c.Context(), provider.ID); err != nil {
 			return err
 		}
+		// Deleting the global default promotes the next profile instead of
+		// leaving the instance with no default at all.
+		if provider.IsDefault == 1 {
+			if _, err := deps.Store.PromoteNextLLMProvider(c.Context()); err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return err
+			}
+		}
 		return c.SendStatus(fiber.StatusNoContent)
 	}
 }
