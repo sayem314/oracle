@@ -50,10 +50,10 @@ type Job struct {
 	LastRunAt  sql.NullTime
 	LastStatus string
 	NextRunAt  sql.NullTime
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
 	ProviderID sql.NullInt64
 	Model      string
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
 }
 
 type LlmModel struct {
