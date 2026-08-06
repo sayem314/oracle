@@ -179,9 +179,9 @@ func TestDeleteUser(t *testing.T) {
 		_, err := s.GetSession(t.Context(), session.ID)
 		require.ErrorIs(t, err, sql.ErrNoRows)
 
-		count, err := s.CountMessages(t.Context(), session.ID)
+		messages, err := s.ListMessages(t.Context(), db.ListMessagesParams{SessionID: session.ID, Limit: 10})
 		require.NoError(t, err)
-		assert.Equal(t, int64(0), count)
+		assert.Empty(t, messages)
 	})
 }
 

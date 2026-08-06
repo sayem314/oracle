@@ -13,12 +13,3 @@ FROM (
 	LIMIT ? OFFSET ?
 )
 ORDER BY id ASC;
-
--- name: CountMessages :one
-SELECT COUNT(*)
-FROM messages
-WHERE session_id = ?;
-
--- name: DeleteMessagesBySession :exec
-DELETE FROM messages
-WHERE session_id = ?;

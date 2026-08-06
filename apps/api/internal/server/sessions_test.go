@@ -180,9 +180,9 @@ func TestDeleteSession(t *testing.T) {
 	res := doJobsRequest(t, app, http.MethodDelete, "/api/v1/sessions/"+itoa(session.ID), cookie, nil)
 	require.Equal(t, http.StatusNoContent, res.StatusCode)
 
-	count, err := s.CountMessages(t.Context(), session.ID)
+	messages, err := s.ListMessages(t.Context(), db.ListMessagesParams{SessionID: session.ID, Limit: 10})
 	require.NoError(t, err)
-	assert.Equal(t, int64(0), count)
+	assert.Empty(t, messages)
 
 	calls, err := s.ListToolCallsBySession(t.Context(), session.ID)
 	require.NoError(t, err)

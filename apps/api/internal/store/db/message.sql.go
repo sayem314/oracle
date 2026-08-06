@@ -34,29 +34,6 @@ func (q *Queries) AppendMessage(ctx context.Context, arg AppendMessageParams) (M
 	return i, err
 }
 
-const countMessages = `-- name: CountMessages :one
-SELECT COUNT(*)
-FROM messages
-WHERE session_id = ?
-`
-
-func (q *Queries) CountMessages(ctx context.Context, sessionID int64) (int64, error) {
-	row := q.db.QueryRowContext(ctx, countMessages, sessionID)
-	var count int64
-	err := row.Scan(&count)
-	return count, err
-}
-
-const deleteMessagesBySession = `-- name: DeleteMessagesBySession :exec
-DELETE FROM messages
-WHERE session_id = ?
-`
-
-func (q *Queries) DeleteMessagesBySession(ctx context.Context, sessionID int64) error {
-	_, err := q.db.ExecContext(ctx, deleteMessagesBySession, sessionID)
-	return err
-}
-
 const listMessages = `-- name: ListMessages :many
 SELECT id, session_id, role, content, created_at
 FROM (

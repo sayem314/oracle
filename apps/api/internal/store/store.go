@@ -20,8 +20,6 @@ type Store interface {
 
 	AppendMessage(ctx context.Context, arg db.AppendMessageParams) (db.Message, error)
 	ListMessages(ctx context.Context, arg db.ListMessagesParams) ([]db.Message, error)
-	CountMessages(ctx context.Context, sessionID int64) (int64, error)
-	DeleteMessagesBySession(ctx context.Context, sessionID int64) error
 
 	InsertToolCall(ctx context.Context, arg db.InsertToolCallParams) (db.ToolCall, error)
 	UpdateToolCallResult(ctx context.Context, arg db.UpdateToolCallResultParams) error

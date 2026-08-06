@@ -169,7 +169,13 @@ func (e *Engine) Run(ctx context.Context, sink Sink, sessionID, userID, provider
 		if err != nil {
 			return fmt.Errorf("resolve permissions: %w", err)
 		}
-		rules = e.Permissions.WithUserOverrides(overrides.Default != nil, derefVerdict(overrides.Default), overrides.Rules)
+
+		// A nil override inherits the global default.
+		var defaultVerdict permission.Verdict
+		if overrides.Default != nil {
+			defaultVerdict = *overrides.Default
+		}
+		rules = e.Permissions.WithUserOverrides(overrides.Default != nil, defaultVerdict, overrides.Rules)
 	}
 	tools := e.Tools.Definitions()
 
@@ -305,13 +311,6 @@ func (e *Engine) evaluate(rules *permission.Ruleset, name string) permission.Ver
 		return rules.EvaluateHeadless(name)
 	}
 	return rules.Evaluate(name)
-}
-
-func derefVerdict(v *permission.Verdict) permission.Verdict {
-	if v == nil {
-		return permission.Allow
-	}
-	return *v
 }
 
 func (e *Engine) ExecuteToolCall(ctx context.Context, call llm.ToolCall) (result, status string) {

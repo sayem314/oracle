@@ -246,9 +246,9 @@ func TestChatNewSession(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, userID, session.UserID)
 
-	count, err := s.CountMessages(t.Context(), start.SessionID)
+	messages, err := s.ListMessages(t.Context(), db.ListMessagesParams{SessionID: start.SessionID, Limit: 10})
 	require.NoError(t, err)
-	assert.Equal(t, int64(2), count)
+	require.Len(t, messages, 2)
 }
 
 func TestChatStreamsHistoryToProvider(t *testing.T) {
@@ -301,9 +301,9 @@ func TestChatStreamsHistoryToProvider(t *testing.T) {
 		{Role: llm.RoleUser, Content: "how are you?"},
 	}, provider.gotRequest.Messages)
 
-	count, err := s.CountMessages(ctx, session.ID)
+	messages, err := s.ListMessages(ctx, db.ListMessagesParams{SessionID: session.ID, Limit: 10})
 	require.NoError(t, err)
-	assert.Equal(t, int64(4), count)
+	require.Len(t, messages, 4)
 }
 
 func TestChatEmptyMessage(t *testing.T) {
@@ -360,9 +360,9 @@ func TestChatProviderError(t *testing.T) {
 	var start startEvent
 	decodeFrame(t, starts[0], &start)
 
-	count, err := s.CountMessages(t.Context(), start.SessionID)
+	messages, err := s.ListMessages(t.Context(), db.ListMessagesParams{SessionID: start.SessionID, Limit: 10})
 	require.NoError(t, err)
-	assert.Equal(t, int64(1), count)
+	require.Len(t, messages, 1)
 }
 
 func TestChatMidStreamError(t *testing.T) {
@@ -393,9 +393,9 @@ func TestChatMidStreamError(t *testing.T) {
 	var start startEvent
 	decodeFrame(t, starts[0], &start)
 
-	count, err := s.CountMessages(t.Context(), start.SessionID)
+	messages, err := s.ListMessages(t.Context(), db.ListMessagesParams{SessionID: start.SessionID, Limit: 10})
 	require.NoError(t, err)
-	assert.Equal(t, int64(1), count)
+	require.Len(t, messages, 1)
 }
 
 func TestChatToolLoop(t *testing.T) {

@@ -101,14 +101,10 @@ func TestMessageLifecycle(t *testing.T) {
 	assert.Equal(t, "assistant", messages[1].Role)
 	assert.Equal(t, "hello", messages[1].Content)
 
-	count, err := s.CountMessages(ctx, session.ID)
+	require.NoError(t, s.DeleteSession(ctx, session.ID))
+	remain, err := s.ListMessages(ctx, db.ListMessagesParams{SessionID: session.ID, Limit: 10})
 	require.NoError(t, err)
-	assert.Equal(t, int64(2), count)
-
-	require.NoError(t, s.DeleteMessagesBySession(ctx, session.ID))
-	count, err = s.CountMessages(ctx, session.ID)
-	require.NoError(t, err)
-	assert.Equal(t, int64(0), count)
+	assert.Empty(t, remain)
 }
 
 func TestListMessagesReturnsNewest(t *testing.T) {
@@ -155,9 +151,9 @@ func TestDeleteSessionCascadesMessages(t *testing.T) {
 
 	require.NoError(t, s.DeleteSession(ctx, session.ID))
 
-	count, err := s.CountMessages(ctx, session.ID)
+	messages, err := s.ListMessages(ctx, db.ListMessagesParams{SessionID: session.ID, Limit: 10})
 	require.NoError(t, err)
-	assert.Equal(t, int64(0), count)
+	assert.Empty(t, messages)
 }
 
 func TestCreateSessionRequiresExistingUser(t *testing.T) {
@@ -183,9 +179,9 @@ func TestDeleteUserCascadesSessions(t *testing.T) {
 	_, err = s.GetSession(ctx, session.ID)
 	require.ErrorIs(t, err, sql.ErrNoRows)
 
-	count, err := s.CountMessages(ctx, session.ID)
+	messages, err := s.ListMessages(ctx, db.ListMessagesParams{SessionID: session.ID, Limit: 10})
 	require.NoError(t, err)
-	assert.Equal(t, int64(0), count)
+	assert.Empty(t, messages)
 }
 
 func TestToolCallLifecycle(t *testing.T) {
@@ -238,7 +234,7 @@ func TestToolCallsCascadeWithMessage(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	require.NoError(t, s.DeleteMessagesBySession(ctx, session.ID))
+	require.NoError(t, s.DeleteSession(ctx, session.ID))
 
 	calls, err := s.ListToolCallsBySession(ctx, session.ID)
 	require.NoError(t, err)
