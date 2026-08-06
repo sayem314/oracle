@@ -2,6 +2,13 @@
 
 Lightweight ADRs. Latest first.
 
+## 2026-08-06: OpenAPI spec for the /api/v1 surface
+
+- The API surface stabilized (chat, approvals, jobs, providers, prefs, sessions, users), so the documented "API-first: OpenAPI spec" item is now done. `docs/openapi.yaml` is a hand-written OpenAPI 3.1 document covering every route the API serves, with request/response schemas derived from the handler structs (not copied from the frontend, so it stays truthful).
+- The Limen auth server mounted at `/auth/*` is explicitly out of scope — it is third-party software with its own docs; the spec points at it. The SSE chat/approval streams are documented as named events via an `x-oracle-sse-events` extension, since OpenAPI cannot express event names natively; the event payload schemas are real components referenced from the responses.
+- The `adminRole` security scheme is a marker only: enforcement is role-based on the session, and the scheme just flags which routes require `admin`. `nullable` is expressed the 3.1 way (`type: [integer, 'null']`).
+- Verified with `bunx @redocly/cli lint` (zero errors and zero warnings). The one rule the spec trips on, `operation-4xx-response` on `/health`, is explicitly ignored in `.redocly.lint-ignore.yaml`: a liveness probe has no 4xx by design, and the ignore file records exactly which path that applies to rather than weakening the rule globally. The check is repeatable via `make openapi-lint` and runs through bun, consistent with the frontend workspace. No codegen yet: per the planned note, codegen is evaluated per step when there is a consumer (validation middleware or a typed client).
+
 ## 2026-08-06: Per-user permission rulesets (Step 9 follow-up)
 
 - Tool permissions were one global ruleset from env (`ORACLE_PERMISSION_DEFAULT` / `ORACLE_PERMISSION_RULES`), which forced a single level of autonomy for the whole household. A `user_permissions` row (user_id PK, FK -> auth_users CASCADE, `default_verdict` nullable, `rules` TEXT) now carries per-user overrides; admin-managed via `PUT/DELETE /api/v1/users/:id/permissions` behind the existing `requireAdmin` group, with the admin's own row handled in the Users page like every other user.

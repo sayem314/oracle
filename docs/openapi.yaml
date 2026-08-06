@@ -1,0 +1,1086 @@
+openapi: 3.1.0
+info:
+  title: oracle API
+  version: 1.0.0
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+  description: >
+    HTTP API for oracle, the self-hosted assistant. Every `/api/v1` route
+    requires an authenticated session cookie issued by the auth server
+    mounted at `/auth/*` (Limen, out of scope of this document — see the
+    auth package and the frontend's `api.ts` for the calls it makes).
+    Admin-only routes are marked; non-admins receive 403
+    (`{"error":"admin access required"}`).
+
+    Errors are JSON `{"error": "message"}`. The chat and approvals endpoints
+    stream Server-Sent Events instead of returning a body.
+servers:
+  - url: /
+    description: Same-origin deployment (the web app proxies /api/v1 to the API).
+tags:
+  - name: chat
+    description: Streaming model turns and tool approval decisions.
+  - name: jobs
+    description: Scheduled headless runs.
+  - name: providers
+    description: Admin-managed LLM gateway profiles and per-user defaults.
+  - name: sessions
+    description: Chat session history.
+  - name: users
+    description: Admin-managed users and permission overrides.
+paths:
+  /health:
+    get:
+      tags: []
+      security: []
+      summary: Liveness probe
+      operationId: health
+      responses:
+        '200':
+          description: Always returns ok when the process is up.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status:
+                    type: string
+                    const: ok
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/v1/chat:
+    post:
+      tags: [chat]
+      summary: Stream a chat turn
+      description: >
+        Runs the model->tool->model loop for the current user and streams
+        SSE events until the turn completes. The first event is always
+        `start` (with a fresh session id when none was provided); tool calls
+        surface as `tool_calls`; `approval_required` pauses the turn until a
+        decision arrives on `/api/v1/approvals`; `done` terminates the
+        stream. Streams `error` instead of `done` on failure.
+      operationId: streamChat
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChatRequest'
+      responses:
+        '200':
+          description: SSE stream of turn events (see x-oracle-sse-events).
+          content:
+            text/event-stream:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/StartEvent'
+                  - $ref: '#/components/schemas/DeltaEvent'
+                  - $ref: '#/components/schemas/ToolCallsEvent'
+                  - $ref: '#/components/schemas/ToolResultEvent'
+                  - $ref: '#/components/schemas/ApprovalRequiredEvent'
+                  - $ref: '#/components/schemas/DoneEvent'
+                  - $ref: '#/components/schemas/ErrorEvent'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/v1/approvals:
+    post:
+      tags: [chat]
+      summary: Decide a pending tool approval
+      description: >
+        Answers an `approval_required` event by id with `allow` or `deny`.
+        Resumes the waiting chat stream on the same event stream; the
+        approving user must be the same one who triggered the request.
+      operationId: decideApproval
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ApprovalRequest'
+      responses:
+        '200':
+          description: SSE stream resuming with a `decision` event (see x-oracle-sse-events).
+          content:
+            text/event-stream:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/DecisionEvent'
+                  - $ref: '#/components/schemas/ErrorEvent'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/v1/jobs:
+    get:
+      tags: [jobs]
+      summary: List scheduled jobs
+      description: Only the current user's jobs.
+      operationId: listJobs
+      security:
+        - sessionCookie: []
+      responses:
+        '200':
+          description: All jobs for the session's user, newest last.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Job'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    post:
+      tags: [jobs]
+      summary: Create a scheduled job
+      operationId: createJob
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/JobCreate'
+      responses:
+        '201':
+          description: The created job.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/v1/jobs/{id}:
+    parameters:
+      - $ref: '#/components/parameters/JobId'
+    patch:
+      tags: [jobs]
+      summary: Update a scheduled job
+      description: Only fields present in the body are changed.
+      operationId: updateJob
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/JobUpdate'
+      responses:
+        '200':
+          description: The updated job.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    delete:
+      tags: [jobs]
+      summary: Delete a scheduled job
+      operationId: deleteJob
+      security:
+        - sessionCookie: []
+      responses:
+        '204':
+          description: Deleted.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/v1/llm/providers:
+    get:
+      tags: [providers]
+      summary: List LLM provider profiles
+      description: >
+        Visible to all authenticated users so the chat model picker can show
+        every gateway. API keys are never returned; only `has_api_key`.
+      operationId: listProviders
+      security:
+        - sessionCookie: []
+      responses:
+        '200':
+          description: All configured profiles.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/LLMProvider'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    post:
+      tags: [providers]
+      summary: Create a provider profile
+      operationId: createProvider
+      security:
+        - sessionCookie: []
+        - adminRole: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LLMProviderInput'
+      responses:
+        '201':
+          description: The created profile (without the API key).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LLMProvider'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/v1/llm/providers/{id}:
+    parameters:
+      - $ref: '#/components/parameters/ProviderId'
+    patch:
+      tags: [providers]
+      summary: Update a provider profile
+      description: Only fields present in the body are changed; `api_key` is masked unless a new one is supplied.
+      operationId: updateProvider
+      security:
+        - sessionCookie: []
+        - adminRole: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LLMProviderInput'
+      responses:
+        '200':
+          description: The updated profile.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LLMProvider'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    delete:
+      tags: [providers]
+      summary: Delete a provider profile
+      operationId: deleteProvider
+      security:
+        - sessionCookie: []
+        - adminRole: []
+      responses:
+        '204':
+          description: Deleted.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/v1/llm/providers/{id}/models:
+    parameters:
+      - $ref: '#/components/parameters/ProviderId'
+    post:
+      tags: [providers]
+      summary: Fetch models from a provider gateway
+      description: Queries the gateway's `/v1/models` and stores the result in the profile.
+      operationId: fetchProviderModels
+      security:
+        - sessionCookie: []
+        - adminRole: []
+      responses:
+        '200':
+          description: The models now stored on the profile.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [models]
+                properties:
+                  models:
+                    type: array
+                    items:
+                      type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/v1/llm/prefs:
+    get:
+      tags: [providers]
+      summary: Get the user's default provider/model preference
+      operationId: getLLMPrefs
+      security:
+        - sessionCookie: []
+      responses:
+        '200':
+          description: The stored preference, or the global default when unset.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LLMPrefs'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    put:
+      tags: [providers]
+      summary: Set the user's default provider/model preference
+      operationId: putLLMPrefs
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LLMPrefs'
+      responses:
+        '200':
+          description: The stored preference.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LLMPrefs'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/v1/sessions:
+    get:
+      tags: [sessions]
+      summary: List chat sessions
+      description: Only the current user's sessions, newest first.
+      operationId: listSessions
+      security:
+        - sessionCookie: []
+      responses:
+        '200':
+          description: The user's sessions.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SessionInfo'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/v1/sessions/{id}:
+    parameters:
+      - $ref: '#/components/parameters/SessionId'
+    patch:
+      tags: [sessions]
+      summary: Rename a session
+      operationId: updateSession
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title]
+              properties:
+                title:
+                  type: string
+      responses:
+        '200':
+          description: The updated session.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionInfo'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    delete:
+      tags: [sessions]
+      summary: Delete a session and its messages
+      operationId: deleteSession
+      security:
+        - sessionCookie: []
+      responses:
+        '204':
+          description: Deleted.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/v1/sessions/{id}/messages:
+    parameters:
+      - $ref: '#/components/parameters/SessionId'
+    get:
+      tags: [sessions]
+      summary: List a session's messages
+      description: Tool calls are nested per message when present.
+      operationId: listMessages
+      security:
+        - sessionCookie: []
+      responses:
+        '200':
+          description: The session's messages, oldest first.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SessionMessage'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/v1/users:
+    get:
+      tags: [users]
+      summary: List users
+      description: Includes each user's permission overrides; admin only.
+      operationId: listUsers
+      security:
+        - sessionCookie: []
+        - adminRole: []
+      responses:
+        '200':
+          description: All users.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/User'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    post:
+      tags: [users]
+      summary: Create a user
+      description: Creates a password-login user; admin only. Registration is locked after the first user.
+      operationId: createUser
+      security:
+        - sessionCookie: []
+        - adminRole: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserCreate'
+      responses:
+        '201':
+          description: The created user.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/v1/users/{id}:
+    parameters:
+      - $ref: '#/components/parameters/UserId'
+    delete:
+      tags: [users]
+      summary: Delete a user
+      description: Admin only. The admin cannot delete themselves.
+      operationId: deleteUser
+      security:
+        - sessionCookie: []
+        - adminRole: []
+      responses:
+        '204':
+          description: Deleted.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/v1/users/{id}/reset-password:
+    parameters:
+      - $ref: '#/components/parameters/UserId'
+    post:
+      tags: [users]
+      summary: Reset a user's password
+      description: >
+        Admin only. Revokes all of the user's sessions, so their next login
+        uses the new password.
+      operationId: resetUserPassword
+      security:
+        - sessionCookie: []
+        - adminRole: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [password]
+              properties:
+                password:
+                  type: string
+                  description: Must satisfy the password policy (min 8 chars, upper, lower, number).
+      responses:
+        '204':
+          description: Password reset and sessions revoked.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/v1/users/{id}/permissions:
+    parameters:
+      - $ref: '#/components/parameters/UserId'
+    put:
+      tags: [users]
+      summary: Set a user's permission overrides
+      description: >
+        Admin only. Overrides merge with the global env ruleset; per-user
+        rules cannot relax a global deny. `default_verdict` null means
+        inherit the global default. Returns the stored overrides.
+      operationId: updateUserPermissions
+      security:
+        - sessionCookie: []
+        - adminRole: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PermissionUpdate'
+      responses:
+        '200':
+          description: The stored overrides.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PermissionUpdate'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    delete:
+      tags: [users]
+      summary: Clear a user's permission overrides
+      description: Removes the row; the user returns to the global ruleset.
+      operationId: clearUserPermissions
+      security:
+        - sessionCookie: []
+        - adminRole: []
+      responses:
+        '204':
+          description: Overrides cleared.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: session
+      description: Session cookie issued by the auth server at /auth/*.
+    adminRole:
+      type: oauth2
+      flows: {}
+      description: >
+        Marker scheme for admin-only routes. Real enforcement is role-based
+        on the session's user (role `admin`); this scheme documents the
+        requirement only.
+  parameters:
+    SessionId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+      description: Session id (visible in the start event).
+    JobId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+      description: Job id.
+    ProviderId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+      description: Provider profile id.
+    UserId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+      description: User id.
+  responses:
+    BadRequest:
+      description: Invalid input.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unauthorized:
+      description: Missing or invalid session.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Forbidden:
+      description: Admin access required.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: The resource does not exist or belongs to another user.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    InternalError:
+      description: Unexpected failure.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+    ChatRequest:
+      type: object
+      required: [message]
+      properties:
+        session_id:
+          type: integer
+          format: int64
+          description: Omit to start a new session.
+        message:
+          type: string
+        model:
+          type: string
+          description: Overrides the user's default model.
+        provider_id:
+          type: integer
+          format: int64
+          description: Overrides the user's default provider.
+    ApprovalRequest:
+      type: object
+      required: [id, decision]
+      properties:
+        id:
+          type: integer
+          format: int64
+        decision:
+          type: string
+          enum: [allow, deny]
+    Job:
+      type: object
+      required: [id, schedule, prompt, enabled, provider_id, model, last_status, created_at, updated_at]
+      properties:
+        id:
+          type: integer
+          format: int64
+        session_id:
+          type: [integer, 'null']
+          format: int64
+        schedule:
+          type: string
+          description: Cron expression.
+        prompt:
+          type: string
+        enabled:
+          type: boolean
+        provider_id:
+          type: integer
+          format: int64
+        model:
+          type: string
+        last_run_at:
+          type: [string, 'null']
+          format: date-time
+        last_status:
+          type: string
+          description: ok, error, or denied.
+        next_run_at:
+          type: [string, 'null']
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    JobCreate:
+      type: object
+      required: [schedule, prompt]
+      properties:
+        schedule:
+          type: string
+        prompt:
+          type: string
+        session_id:
+          type: integer
+          format: int64
+        provider_id:
+          type: integer
+          format: int64
+        model:
+          type: string
+    JobUpdate:
+      type: object
+      properties:
+        schedule:
+          type: string
+        prompt:
+          type: string
+        enabled:
+          type: boolean
+        provider_id:
+          type: integer
+          format: int64
+        model:
+          type: string
+    LLMProvider:
+      type: object
+      required: [id, name, provider, base_url, has_api_key, models, default_model, default]
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        provider:
+          type: string
+          description: Gateway kind, e.g. openai or openai-compatible.
+        base_url:
+          type: string
+        has_api_key:
+          type: boolean
+        models:
+          type: array
+          items:
+            type: string
+        default_model:
+          type: string
+        default:
+          type: boolean
+          description: One profile is the instance default for users without a preference.
+    LLMProviderInput:
+      type: object
+      required: [name, provider, base_url]
+      properties:
+        name:
+          type: string
+        provider:
+          type: string
+        base_url:
+          type: string
+        api_key:
+          type: string
+          description: Omitted from responses; masked on update when absent.
+        models:
+          type: array
+          items:
+            type: string
+        default_model:
+          type: string
+        default:
+          type: boolean
+    LLMPrefs:
+      type: object
+      required: [provider_id, model]
+      properties:
+        provider_id:
+          type: integer
+          format: int64
+        model:
+          type: string
+    SessionInfo:
+      type: object
+      required: [id, title, created_at, updated_at]
+      properties:
+        id:
+          type: integer
+          format: int64
+        title:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    SessionMessage:
+      type: object
+      required: [id, role, content, created_at]
+      properties:
+        id:
+          type: integer
+          format: int64
+        role:
+          type: string
+          enum: [user, assistant, system]
+        content:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        tool_calls:
+          type: array
+          items:
+            $ref: '#/components/schemas/ToolCallResult'
+    ToolCallResult:
+      type: object
+      required: [id, call_id, name, arguments, result, status]
+      properties:
+        id:
+          type: integer
+          format: int64
+        call_id:
+          type: string
+        name:
+          type: string
+        arguments:
+          type: string
+          description: JSON-serialized arguments.
+        result:
+          type: string
+        status:
+          type: string
+          description: success, error, or denied.
+    ToolCall:
+      type: object
+      required: [id, name, arguments]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        arguments:
+          type: string
+    User:
+      type: object
+      required: [id, email, role, created_at, permission_rules]
+      properties:
+        id:
+          type: integer
+          format: int64
+        email:
+          type: string
+        role:
+          type: string
+          enum: [admin, member]
+        created_at:
+          type: string
+          format: date-time
+        permission_default:
+          type: [string, 'null']
+          enum: [allow, deny, ask]
+          description: Null inherits the global default.
+        permission_rules:
+          type: string
+          description: Comma-separated tool:verdict entries, e.g. "get_time:allow, web_*:ask". Empty when no overrides.
+    UserCreate:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+        password:
+          type: string
+    PermissionUpdate:
+      type: object
+      required: [rules]
+      properties:
+        default_verdict:
+          type: [string, 'null']
+          enum: [allow, deny, ask]
+          description: Null clears the stored default (inherit global).
+        rules:
+          type: string
+          description: Comma-separated tool:verdict entries with glob tool patterns.
+    StartEvent:
+      type: object
+      required: [session_id, user_message_id]
+      properties:
+        session_id:
+          type: integer
+          format: int64
+        user_message_id:
+          type: integer
+          format: int64
+    DeltaEvent:
+      type: object
+      required: [content]
+      properties:
+        content:
+          type: string
+    DoneEvent:
+      type: object
+      required: [message_id, finish_reason]
+      properties:
+        message_id:
+          type: integer
+          format: int64
+        finish_reason:
+          type: string
+    ErrorEvent:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string
+    ToolCallsEvent:
+      type: object
+      required: [message_id, calls]
+      properties:
+        message_id:
+          type: integer
+          format: int64
+        calls:
+          type: array
+          items:
+            $ref: '#/components/schemas/ToolCall'
+    ToolResultEvent:
+      type: object
+      required: [tool_call_id, name, result]
+      properties:
+        tool_call_id:
+          type: string
+        name:
+          type: string
+        result:
+          type: string
+    ApprovalRequiredEvent:
+      type: object
+      required: [id, tool_call_id, message_id, name, arguments]
+      properties:
+        id:
+          type: integer
+          format: int64
+        tool_call_id:
+          type: string
+        message_id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        arguments:
+          type: string
+    DecisionEvent:
+      type: object
+      required: [id, result, status]
+      properties:
+        id:
+          type: integer
+          format: int64
+        result:
+          type: string
+          enum: [allow, deny]
+        status:
+          type: string
+  x-oracle-sse-events:
+    description: >
+      The chat and approvals streams use named SSE events (one `event` +
+      `data` pair per message). Payload schemas:
+      - chat: start (StartEvent), delta (DeltaEvent), tool_calls
+        (ToolCallsEvent), tool_result (ToolResultEvent),
+        approval_required (ApprovalRequiredEvent), done (DoneEvent),
+        error (ErrorEvent)
+      - approvals: decision (DecisionEvent)
