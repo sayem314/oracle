@@ -27,10 +27,9 @@ backup() {
 	echo "backed up to $BACKUP_DIR/$name"
 
 	local count
-	count="$(find "$BACKUP_DIR" -maxdepth 1 -name 'oracle-*.db' | wc -l | tr -d ' ')"
+	count="$(ls -1 "$BACKUP_DIR"/oracle-*.db 2>/dev/null | wc -l | tr -d ' ')"
 	if [ "$count" -gt "$KEEP" ]; then
-		find "$BACKUP_DIR" -maxdepth 1 -name 'oracle-*.db' -printf '%T@ %p\n' |
-			sort -nr | tail -n +$((KEEP + 1)) | cut -d' ' -f2- | xargs rm
+		ls -1t "$BACKUP_DIR"/oracle-*.db | tail -n +$((KEEP + 1)) | xargs rm
 		echo "pruned old snapshots (keeping $KEEP)"
 	fi
 }
@@ -43,7 +42,7 @@ restore() {
 	fi
 	[ -f "$file" ] || { echo "no such backup: $file" >&2; exit 1; }
 
-	(cd "$ROOT" && docker compose stop api)
+	(cd "$ROOT" && docker compose stop api || true)
 	trap '(cd "$ROOT" && docker compose start api)' EXIT
 
 	# Stale -wal/-shm files belong to the old database and would corrupt the
