@@ -22,6 +22,14 @@ const defaultDatabaseURL = "file:oracle.db?_pragma=journal_mode(WAL)&_pragma=bus
 
 const defaultLLMProvider = "mock"
 
+const (
+	defaultContextWindow     = 32000
+	defaultContextReserve    = 20000
+	defaultContextTailTurns  = 2
+	defaultContextKeepRecent = 8000
+	defaultToolOutputChars   = 2000
+)
+
 type Config struct {
 	Port              int
 	LogLevel          zerolog.Level
@@ -34,19 +42,33 @@ type Config struct {
 	LLMModel          string
 	PermissionDefault permission.Verdict
 	PermissionRules   []permission.Rule
+
+	// ContextWindow is the estimated LLM context budget in tokens, kept well
+	// under the real model window so the scheduler and compaction have room.
+	// Compaction and tool-output truncation both derive from it.
+	ContextWindow           int
+	ContextReserve          int
+	ContextTailTurns        int
+	ContextKeepRecentTokens int
+	ToolOutputChars         int
 }
 
 func Load() (Config, error) {
 	k := koanf.New(".")
 
 	if err := k.Load(confmap.Provider(map[string]any{
-		"port":               8080,
-		"log_level":          "info",
-		"database_url":       defaultDatabaseURL,
-		"llm_provider":       defaultLLMProvider,
-		"auth_cookie_secure": false,
-		"permission_default": "ask",
-		"permission_rules":   "",
+		"port":                       8080,
+		"log_level":                  "info",
+		"database_url":               defaultDatabaseURL,
+		"llm_provider":               defaultLLMProvider,
+		"auth_cookie_secure":         false,
+		"permission_default":         "ask",
+		"permission_rules":           "",
+		"context_window":             defaultContextWindow,
+		"context_reserve":            defaultContextReserve,
+		"context_tail_turns":         defaultContextTailTurns,
+		"context_keep_recent_tokens": defaultContextKeepRecent,
+		"tool_output_chars":          defaultToolOutputChars,
 	}, "."), nil); err != nil {
 		return Config{}, fmt.Errorf("load defaults: %w", err)
 	}
@@ -112,17 +134,22 @@ func Load() (Config, error) {
 	}
 
 	return Config{
-		Port:              port,
-		LogLevel:          lvl,
-		DatabaseURL:       databaseURL,
-		AuthSecret:        authSecret,
-		AuthCookieSecure:  k.Bool("auth_cookie_secure"),
-		LLMProvider:       llmProvider,
-		LLMBaseURL:        k.String("llm_base_url"),
-		LLMAPIKey:         k.String("llm_api_key"),
-		LLMModel:          k.String("llm_model"),
-		PermissionDefault: permissionDefault,
-		PermissionRules:   permissionRules,
+		Port:                    port,
+		LogLevel:                lvl,
+		DatabaseURL:             databaseURL,
+		AuthSecret:              authSecret,
+		AuthCookieSecure:        k.Bool("auth_cookie_secure"),
+		LLMProvider:             llmProvider,
+		LLMBaseURL:              k.String("llm_base_url"),
+		LLMAPIKey:               k.String("llm_api_key"),
+		LLMModel:                k.String("llm_model"),
+		PermissionDefault:       permissionDefault,
+		PermissionRules:         permissionRules,
+		ContextWindow:           k.Int("context_window"),
+		ContextReserve:          k.Int("context_reserve"),
+		ContextTailTurns:        k.Int("context_tail_turns"),
+		ContextKeepRecentTokens: k.Int("context_keep_recent_tokens"),
+		ToolOutputChars:         k.Int("tool_output_chars"),
 	}, nil
 }
 

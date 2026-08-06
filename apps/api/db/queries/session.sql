@@ -20,6 +20,12 @@ UPDATE sessions
 SET title = ?
 WHERE id = ?;
 
+-- name: UpdateSessionSummary :exec
+UPDATE sessions
+SET summary = ?,
+	updated_at = CURRENT_TIMESTAMP
+WHERE id = ?;
+
 -- name: TouchSession :exec
 UPDATE sessions
 SET updated_at = CURRENT_TIMESTAMP

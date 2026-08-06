@@ -20,6 +20,8 @@ func clearEnv(t *testing.T) {
 		"ORACLE_PORT", "ORACLE_LOG_LEVEL", "ORACLE_DATABASE_URL", "ORACLE_AUTH_SECRET", "PORT",
 		"ORACLE_LLM_PROVIDER", "ORACLE_LLM_BASE_URL", "ORACLE_LLM_API_KEY", "ORACLE_LLM_MODEL",
 		"ORACLE_PERMISSION_DEFAULT", "ORACLE_PERMISSION_RULES",
+		"ORACLE_CONTEXT_WINDOW", "ORACLE_CONTEXT_RESERVE", "ORACLE_CONTEXT_TAIL_TURNS",
+		"ORACLE_CONTEXT_KEEP_RECENT_TOKENS", "ORACLE_TOOL_OUTPUT_CHARS",
 	} {
 		if v, ok := os.LookupEnv(key); ok {
 			t.Cleanup(func() { _ = os.Setenv(key, v) })
@@ -47,6 +49,11 @@ func TestLoadDefaults(t *testing.T) {
 	assert.Equal(t, "mock", cfg.LLMProvider)
 	assert.Equal(t, permission.Ask, cfg.PermissionDefault)
 	assert.Empty(t, cfg.PermissionRules)
+	assert.Equal(t, 32000, cfg.ContextWindow)
+	assert.Equal(t, 20000, cfg.ContextReserve)
+	assert.Equal(t, 2, cfg.ContextTailTurns)
+	assert.Equal(t, 8000, cfg.ContextKeepRecentTokens)
+	assert.Equal(t, 2000, cfg.ToolOutputChars)
 }
 
 func TestDatabaseURLEnvOverride(t *testing.T) {
@@ -77,6 +84,24 @@ func TestLoadEnvOverride(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 9090, cfg.Port)
 	assert.Equal(t, zerolog.DebugLevel, cfg.LogLevel)
+}
+
+func TestContextBudgetEnvOverride(t *testing.T) {
+	clearEnv(t)
+	withAuthSecret(t)
+	t.Setenv("ORACLE_CONTEXT_WINDOW", "64000")
+	t.Setenv("ORACLE_CONTEXT_RESERVE", "40000")
+	t.Setenv("ORACLE_CONTEXT_TAIL_TURNS", "4")
+	t.Setenv("ORACLE_CONTEXT_KEEP_RECENT_TOKENS", "12000")
+	t.Setenv("ORACLE_TOOL_OUTPUT_CHARS", "3000")
+
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	assert.Equal(t, 64000, cfg.ContextWindow)
+	assert.Equal(t, 40000, cfg.ContextReserve)
+	assert.Equal(t, 4, cfg.ContextTailTurns)
+	assert.Equal(t, 12000, cfg.ContextKeepRecentTokens)
+	assert.Equal(t, 3000, cfg.ToolOutputChars)
 }
 
 func TestLoadDotenvFile(t *testing.T) {

@@ -88,6 +88,7 @@ type Session struct {
 	Title     string
 	CreatedAt time.Time
 	UpdatedAt time.Time
+	Summary   string
 }
 
 type ToolCall struct {

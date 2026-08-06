@@ -83,6 +83,13 @@ func main() {
 		Tools:              tools,
 		Permissions:        ruleset,
 		PermissionResolver: &chat.PermissionOverlay{Store: st},
+		Compaction: chat.CompactionConfig{
+			ContextWindow:    cfg.ContextWindow,
+			ReserveTokens:    cfg.ContextReserve,
+			TailTurns:        cfg.ContextTailTurns,
+			KeepRecentTokens: cfg.ContextKeepRecentTokens,
+			ToolOutputChars:  cfg.ToolOutputChars,
+		},
 	}
 
 	sched := scheduler.New(st, engine.AsHeadless(), scheduler.DefaultInterval)

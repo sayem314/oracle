@@ -142,7 +142,10 @@ type Engine struct {
 	// PermissionResolver overlays the user's overrides on Permissions per
 	// run; nil means every run uses the global ruleset.
 	PermissionResolver PermissionResolver
-	Headless           bool
+	// Compaction controls context condensation and tool-output truncation when
+	// the assembled history grows large. The zero value disables both.
+	Compaction CompactionConfig
+	Headless   bool
 }
 
 // AsHeadless returns a copy for unattended runs, where ask verdicts become
@@ -178,6 +181,21 @@ func (e *Engine) Run(ctx context.Context, sink Sink, sessionID, userID, provider
 		rules = e.Permissions.WithUserOverrides(overrides.Default != nil, defaultVerdict, overrides.Rules)
 	}
 	tools := e.Tools.Definitions()
+
+	if e.Compaction.Enabled() {
+		built, summary, compacted := e.compactHistory(ctx, e.Compaction, req.Messages, e.summarizer(provider, req.Model))
+		if compacted {
+			req.Messages = built
+			if summary != "" {
+				if err := e.Store.UpdateSessionSummary(ctx, db.UpdateSessionSummaryParams{
+					ID:      sessionID,
+					Summary: summary,
+				}); err != nil {
+					return fmt.Errorf("persist session summary: %w", err)
+				}
+			}
+		}
+	}
 
 	for range ToolRoundLimit {
 		roundReq := req
@@ -355,6 +373,9 @@ func (e *Engine) BuildHistory(ctx context.Context, sessionID int64) ([]llm.Messa
 			continue
 		}
 		history = append(history, msg)
+	}
+	if e.Compaction.ToolOutputChars > 0 {
+		history = truncateToolOutputs(history, e.Compaction.ToolOutputChars)
 	}
 	return history, nil
 }
