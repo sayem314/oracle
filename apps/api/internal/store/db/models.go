@@ -107,3 +107,10 @@ type UserLlmPref struct {
 	Model      string
 	UpdatedAt  time.Time
 }
+
+type UserPermission struct {
+	UserID         int64
+	DefaultVerdict sql.NullString
+	Rules          string
+	UpdatedAt      time.Time
+}

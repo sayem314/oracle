@@ -56,6 +56,10 @@ type Store interface {
 	GetUserLLMPrefs(ctx context.Context, userID int64) (db.UserLlmPref, error)
 	UpsertUserLLMPrefs(ctx context.Context, arg db.UpsertUserLLMPrefsParams) (db.UserLlmPref, error)
 	DeleteUserLLMPrefs(ctx context.Context, userID int64) error
+
+	GetUserPermissions(ctx context.Context, userID int64) (db.UserPermission, error)
+	UpsertUserPermissions(ctx context.Context, arg db.UpsertUserPermissionsParams) (db.UserPermission, error)
+	DeleteUserPermissions(ctx context.Context, userID int64) error
 }
 
 // sqlStore embeds the generated Queries and adds methods that need more than

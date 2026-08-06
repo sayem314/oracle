@@ -17,9 +17,11 @@ import (
 )
 
 type userResponse struct {
-	ID    int64  `json:"id"`
-	Email string `json:"email"`
-	Role  string `json:"role"`
+	ID                int64   `json:"id"`
+	Email             string  `json:"email"`
+	Role              string  `json:"role"`
+	PermissionDefault *string `json:"permission_default"`
+	PermissionRules   string  `json:"permission_rules"`
 }
 
 func doUsersRequest(t *testing.T, app *fiber.App, method, path, cookie string, body any) *http.Response {
@@ -180,6 +182,121 @@ func TestDeleteUser(t *testing.T) {
 		count, err := s.CountMessages(t.Context(), session.ID)
 		require.NoError(t, err)
 		assert.Equal(t, int64(0), count)
+	})
+}
+
+type userPermissionsResponse struct {
+	DefaultVerdict *string `json:"default_verdict"`
+	Rules          string  `json:"rules"`
+}
+
+func decodeUserPermissions(t *testing.T, res *http.Response) userPermissionsResponse {
+	t.Helper()
+	var p userPermissionsResponse
+	require.NoError(t, json.NewDecoder(res.Body).Decode(&p))
+	return p
+}
+
+func TestUserPermissions(t *testing.T) {
+	app, _, dbConn := newTestApp(t, llm.NewMock())
+	adminCookie, _ := signUp(t, app, dbConn, "admin@example.com")
+
+	res := doUsersRequest(t, app, http.MethodPost, "/api/v1/users", adminCookie, map[string]any{
+		"email":    "member@example.com",
+		"password": "Secure1pass",
+	})
+	require.Equal(t, http.StatusCreated, res.StatusCode)
+	member := decodeUser(t, res)
+	memberCookie := signIn(t, app, "member@example.com", "Secure1pass")
+
+	t.Run("member cannot update or clear permissions", func(t *testing.T) {
+		res := doUsersRequest(t, app, http.MethodPut, "/api/v1/users/"+itoa(member.ID)+"/permissions", memberCookie, map[string]any{
+			"default_verdict": "deny",
+		})
+		assert.Equal(t, http.StatusForbidden, res.StatusCode)
+
+		res = doUsersRequest(t, app, http.MethodDelete, "/api/v1/users/"+itoa(member.ID)+"/permissions", memberCookie, nil)
+		assert.Equal(t, http.StatusForbidden, res.StatusCode)
+	})
+
+	t.Run("unknown user", func(t *testing.T) {
+		res := doUsersRequest(t, app, http.MethodPut, "/api/v1/users/99999/permissions", adminCookie, map[string]any{
+			"default_verdict": "deny",
+		})
+		assert.Equal(t, http.StatusNotFound, res.StatusCode)
+
+		res = doUsersRequest(t, app, http.MethodDelete, "/api/v1/users/99999/permissions", adminCookie, nil)
+		assert.Equal(t, http.StatusNotFound, res.StatusCode)
+	})
+
+	t.Run("invalid verdict and rules are rejected", func(t *testing.T) {
+		res := doUsersRequest(t, app, http.MethodPut, "/api/v1/users/"+itoa(member.ID)+"/permissions", adminCookie, map[string]any{
+			"default_verdict": "maybe",
+		})
+		assert.Equal(t, http.StatusBadRequest, res.StatusCode)
+
+		res = doUsersRequest(t, app, http.MethodPut, "/api/v1/users/"+itoa(member.ID)+"/permissions", adminCookie, map[string]any{
+			"rules": "not-a-rule",
+		})
+		assert.Equal(t, http.StatusBadRequest, res.StatusCode)
+	})
+
+	t.Run("set, read back, clear", func(t *testing.T) {
+		res := doUsersRequest(t, app, http.MethodPut, "/api/v1/users/"+itoa(member.ID)+"/permissions", adminCookie, map[string]any{
+			"default_verdict": "ask",
+			"rules":           "get_time:allow",
+		})
+		require.Equal(t, http.StatusOK, res.StatusCode)
+		got := decodeUserPermissions(t, res)
+		require.NotNil(t, got.DefaultVerdict)
+		assert.Equal(t, "ask", *got.DefaultVerdict)
+		assert.Equal(t, "get_time:allow", got.Rules)
+
+		res = doUsersRequest(t, app, http.MethodGet, "/api/v1/users", adminCookie, nil)
+		require.Equal(t, http.StatusOK, res.StatusCode)
+		users := decodeUserList(t, res)
+		require.Len(t, users, 2)
+		var memberView userResponse
+		for _, u := range users {
+			if u.ID == member.ID {
+				memberView = u
+			}
+		}
+		require.NotNil(t, memberView.PermissionDefault)
+		assert.Equal(t, "ask", *memberView.PermissionDefault)
+		assert.Equal(t, "get_time:allow", memberView.PermissionRules)
+
+		res = doUsersRequest(t, app, http.MethodDelete, "/api/v1/users/"+itoa(member.ID)+"/permissions", adminCookie, nil)
+		assert.Equal(t, http.StatusNoContent, res.StatusCode)
+
+		res = doUsersRequest(t, app, http.MethodGet, "/api/v1/users", adminCookie, nil)
+		require.Equal(t, http.StatusOK, res.StatusCode)
+		for _, u := range decodeUserList(t, res) {
+			if u.ID == member.ID {
+				assert.Nil(t, u.PermissionDefault)
+				assert.Empty(t, u.PermissionRules)
+			}
+		}
+	})
+
+	t.Run("null default verdict means inherit", func(t *testing.T) {
+		res := doUsersRequest(t, app, http.MethodPut, "/api/v1/users/"+itoa(member.ID)+"/permissions", adminCookie, map[string]any{
+			"default_verdict": nil,
+			"rules":           "get_time:deny",
+		})
+		require.Equal(t, http.StatusOK, res.StatusCode)
+		got := decodeUserPermissions(t, res)
+		assert.Nil(t, got.DefaultVerdict)
+		assert.Equal(t, "get_time:deny", got.Rules)
+	})
+
+	t.Run("deleting the user cascades their permissions", func(t *testing.T) {
+		res := doUsersRequest(t, app, http.MethodDelete, "/api/v1/users/"+itoa(member.ID), adminCookie, nil)
+		require.Equal(t, http.StatusNoContent, res.StatusCode)
+
+		var count int64
+		require.NoError(t, dbConn.QueryRow("SELECT COUNT(*) FROM user_permissions WHERE user_id = ?", member.ID).Scan(&count))
+		assert.Zero(t, count)
 	})
 }
 

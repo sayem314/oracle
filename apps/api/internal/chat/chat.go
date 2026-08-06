@@ -2,6 +2,8 @@ package chat
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -86,6 +88,50 @@ type Resolver interface {
 	Resolve(ctx context.Context, userID, providerID int64, model string) (llm.Provider, error)
 }
 
+// PermissionOverrides is the per-user part of a ruleset. A nil Default means
+// inherit the global fallback verdict; Rules are appended after the global
+// rules.
+type PermissionOverrides struct {
+	Default *permission.Verdict
+	Rules   []permission.Rule
+}
+
+// PermissionResolver picks the per-user permission overrides for a run.
+// Resolve must return zero overrides when the user has none stored.
+type PermissionResolver interface {
+	Resolve(ctx context.Context, userID int64) (PermissionOverrides, error)
+}
+
+// PermissionOverlay resolves permission overrides from the store; users
+// without a row inherit the engine's global ruleset untouched.
+type PermissionOverlay struct {
+	Store store.Store
+}
+
+func (o *PermissionOverlay) Resolve(ctx context.Context, userID int64) (PermissionOverrides, error) {
+	row, err := o.Store.GetUserPermissions(ctx, userID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return PermissionOverrides{}, nil
+		}
+		return PermissionOverrides{}, err
+	}
+
+	var overrides PermissionOverrides
+	if row.DefaultVerdict.Valid {
+		v := permission.Verdict(row.DefaultVerdict.String)
+		overrides.Default = &v
+	}
+	if row.Rules != "" {
+		rules, err := permission.ParseRules(row.Rules)
+		if err != nil {
+			return PermissionOverrides{}, fmt.Errorf("parse stored rules for user %d: %w", userID, err)
+		}
+		overrides.Rules = rules
+	}
+	return overrides, nil
+}
+
 // Engine drives the model->tool->model loop shared by the chat and approval
 // handlers and the scheduler.
 type Engine struct {
@@ -93,7 +139,10 @@ type Engine struct {
 	LLM         Resolver
 	Tools       tool.Executor
 	Permissions *permission.Ruleset
-	Headless    bool
+	// PermissionResolver overlays the user's overrides on Permissions per
+	// run; nil means every run uses the global ruleset.
+	PermissionResolver PermissionResolver
+	Headless           bool
 }
 
 // AsHeadless returns a copy for unattended runs, where ask verdicts become
@@ -113,6 +162,14 @@ func (e *Engine) Run(ctx context.Context, sink Sink, sessionID, userID, provider
 	provider, err := e.LLM.Resolve(ctx, userID, providerID, req.Model)
 	if err != nil {
 		return err
+	}
+	rules := e.Permissions
+	if e.PermissionResolver != nil {
+		overrides, err := e.PermissionResolver.Resolve(ctx, userID)
+		if err != nil {
+			return fmt.Errorf("resolve permissions: %w", err)
+		}
+		rules = e.Permissions.WithUserOverrides(overrides.Default != nil, derefVerdict(overrides.Default), overrides.Rules)
 	}
 	tools := e.Tools.Definitions()
 
@@ -177,7 +234,7 @@ func (e *Engine) Run(ctx context.Context, sink Sink, sessionID, userID, provider
 		req.Messages = append(req.Messages, llm.Message{Role: llm.RoleAssistant, Content: text, ToolCalls: calls})
 		awaiting := false
 		for i, call := range calls {
-			switch e.evaluate(call.Name) {
+			switch e.evaluate(rules, call.Name) {
 			case permission.Allow:
 				result, status := e.ExecuteToolCall(ctx, call)
 				if err := e.Store.UpdateToolCallResult(ctx, db.UpdateToolCallResultParams{
@@ -243,11 +300,18 @@ func (e *Engine) Run(ctx context.Context, sink Sink, sessionID, userID, provider
 	return fmt.Errorf("tool call round limit (%d) reached", ToolRoundLimit)
 }
 
-func (e *Engine) evaluate(name string) permission.Verdict {
+func (e *Engine) evaluate(rules *permission.Ruleset, name string) permission.Verdict {
 	if e.Headless {
-		return e.Permissions.EvaluateHeadless(name)
+		return rules.EvaluateHeadless(name)
 	}
-	return e.Permissions.Evaluate(name)
+	return rules.Evaluate(name)
+}
+
+func derefVerdict(v *permission.Verdict) permission.Verdict {
+	if v == nil {
+		return permission.Allow
+	}
+	return *v
 }
 
 func (e *Engine) ExecuteToolCall(ctx context.Context, call llm.ToolCall) (result, status string) {

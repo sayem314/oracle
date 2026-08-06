@@ -59,6 +59,52 @@ func TestEvaluateNoRules(t *testing.T) {
 	assert.Equal(t, permission.Ask, rs.Evaluate("anything"))
 }
 
+func TestWithUserOverrides(t *testing.T) {
+	base := permission.NewRuleset(permission.Allow, []permission.Rule{
+		{Tool: "web_*", Verdict: permission.Ask},
+		{Tool: "shutdown", Verdict: permission.Deny},
+	})
+
+	t.Run("no default override keeps the base default", func(t *testing.T) {
+		rs := base.WithUserOverrides(false, permission.Deny, []permission.Rule{
+			{Tool: "web_search", Verdict: permission.Allow},
+		})
+		assert.Equal(t, permission.Allow, rs.Evaluate("get_time"))
+		// Per-user allow beats the base ask for web_* (last match wins).
+		assert.Equal(t, permission.Allow, rs.Evaluate("web_search"))
+		// Base deny stays absolute against a per-user allow.
+		assert.Equal(t, permission.Deny, rs.Evaluate("shutdown"))
+	})
+
+	t.Run("default override replaces the fallback", func(t *testing.T) {
+		rs := base.WithUserOverrides(true, permission.Deny, nil)
+		assert.Equal(t, permission.Deny, rs.Evaluate("get_time"))
+		assert.Equal(t, permission.Ask, rs.Evaluate("web_search"))
+	})
+
+	t.Run("per-user deny beats base allow and ask", func(t *testing.T) {
+		rs := base.WithUserOverrides(false, permission.Allow, []permission.Rule{
+			{Tool: "get_time", Verdict: permission.Deny},
+			{Tool: "web_*", Verdict: permission.Deny},
+		})
+		assert.Equal(t, permission.Deny, rs.Evaluate("get_time"))
+		assert.Equal(t, permission.Deny, rs.Evaluate("web_search"))
+	})
+
+	t.Run("original ruleset is untouched", func(t *testing.T) {
+		_ = base.WithUserOverrides(true, permission.Deny, []permission.Rule{
+			{Tool: "*", Verdict: permission.Deny},
+		})
+		assert.Equal(t, permission.Allow, base.Evaluate("anything"))
+	})
+}
+
+func TestWithUserOverridesHeadless(t *testing.T) {
+	base := permission.NewRuleset(permission.Allow, nil)
+	rs := base.WithUserOverrides(true, permission.Ask, nil)
+	assert.Equal(t, permission.Deny, rs.EvaluateHeadless("get_time"))
+}
+
 func TestEvaluateHeadless(t *testing.T) {
 	rs := permission.NewRuleset(permission.Ask, []permission.Rule{
 		{Tool: "get_time", Verdict: permission.Allow},

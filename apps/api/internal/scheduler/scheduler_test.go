@@ -213,6 +213,47 @@ func TestRunOnceUsesOwnerProvider(t *testing.T) {
 	assert.Equal(t, "owner-model", gotModel)
 }
 
+// TestRunOnceHeadlessRespectsUserOverrides verifies a job owner's stored ask
+// verdict downgrades to deny in the unattended scheduler run.
+func TestRunOnceHeadlessRespectsUserOverrides(t *testing.T) {
+	s, dbConn := newStore(t)
+	seedUser(t, dbConn, 1)
+	_, err := dbConn.Exec("INSERT INTO user_permissions (user_id, default_verdict) VALUES (1, 'ask')")
+	require.NoError(t, err)
+
+	reg := tool.NewRegistry()
+	require.NoError(t, reg.Register(tool.Tool{
+		Definition: llm.Tool{Name: "clock", Description: "Return the current time."},
+		Execute:    func(_ context.Context, _ json.RawMessage) (string, error) { return "12:00", nil },
+	}))
+
+	provider := &scriptedProvider{rounds: [][]llm.Chunk{
+		{{FinishReason: "tool_calls", ToolCalls: []llm.ToolCall{{ID: "call_1", Name: "clock", Arguments: "{}"}}}},
+		{{Delta: "done"}, {FinishReason: "stop"}},
+	}}
+	engine := &chat.Engine{
+		Store:              s,
+		LLM:                &chat.LLMResolver{Store: s, Default: provider},
+		Tools:              reg,
+		Permissions:        permission.NewRuleset(permission.Allow, nil),
+		PermissionResolver: &chat.PermissionOverlay{Store: s},
+		Headless:           true,
+	}
+	sched := scheduler.New(s, engine, time.Minute)
+	job := createDueJob(t, s, 1, "0 8 * * *", "what time", 1)
+
+	require.NoError(t, sched.RunOnce(t.Context()))
+
+	got, err := s.GetJob(t.Context(), job.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "ok", got.LastStatus)
+
+	var status string
+	require.NoError(t, dbConn.QueryRow(
+		"SELECT status FROM tool_calls WHERE id = (SELECT MIN(id) FROM tool_calls)").Scan(&status))
+	assert.Equal(t, "denied", status)
+}
+
 // TestRunOnceUsesJobProvider verifies a job pinned to a provider/model wins
 // over the owner's default resolution.
 func TestRunOnceUsesJobProvider(t *testing.T) {

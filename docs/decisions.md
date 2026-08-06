@@ -2,6 +2,14 @@
 
 Lightweight ADRs. Latest first.
 
+## 2026-08-06: Per-user permission rulesets (Step 9 follow-up)
+
+- Tool permissions were one global ruleset from env (`ORACLE_PERMISSION_DEFAULT` / `ORACLE_PERMISSION_RULES`), which forced a single level of autonomy for the whole household. A `user_permissions` row (user_id PK, FK -> auth_users CASCADE, `default_verdict` nullable, `rules` TEXT) now carries per-user overrides; admin-managed via `PUT/DELETE /api/v1/users/:id/permissions` behind the existing `requireAdmin` group, with the admin's own row handled in the Users page like every other user.
+- Overrides merge rather than replace, so the env ruleset stays the instance-wide base. `Ruleset.WithUserOverrides` appends the user's rules after the global ones and, when a default verdict is stored, replaces the fallback. That falls out of the existing evaluation semantics: deny is absolute across both lists, and later (per-user) non-deny rules beat earlier global ones, so a per-user `get_time:allow` can relax a global ask, but nobody can relax a global deny.
+- `default_verdict` is NULLable: NULL means "inherit the global default" and is what a fresh row or a cleared row looks like, so the admin can tune rules without having to restate the verdict. Clearing (DELETE) removes the row entirely and the user returns to the env ruleset, which reads back as no overrides in the users list.
+- Resolution happens once per run in `Engine.Run`, next to the LLM provider resolve: a `PermissionResolver` interface over the store (`chat.PermissionOverlay`) returns the user's overrides, and the engine builds the merged ruleset for the run. Headless scheduler runs resolve the job owner's row the same way, and `ask` still downgrades to `deny` there. A resolver failure fails the run rather than silently falling back to the global ruleset (permissions fail closed).
+- Verified: unit tests for the merge semantics, server tests for the admin API and the chat behavior (member denied, admin unaffected, ask surfaces approval, all against the real Limen auth on a temp DB), a scheduler headless test, and a live smoke test of the API on a scratch instance.
+
 ## 2026-08-06: Admin password reset (Step 10b follow-up)
 
 - A user who forgets their password is stuck: Limen's `request-reset`/`reset` flow is built for emailed tokens and this instance has no mailer, and `SetPassword` only works for accounts without a password. The admin-facing fix rides the same plugin flow in-process: `auth.Auth.ResetPassword` looks the user up by ID, calls `RequestPasswordReset` (which returns the token directly here, since verification is disabled and no email hook is set) and applies it via `ResetPassword`, so hashing and the password policy stay on Limen's code path exactly like user creation.

@@ -10,6 +10,8 @@ import (
 	"github.com/gofiber/fiber/v3"
 
 	"github.com/sayem314/oracle/apps/api/internal/auth"
+	"github.com/sayem314/oracle/apps/api/internal/permission"
+	"github.com/sayem314/oracle/apps/api/internal/store/db"
 )
 
 type userResponse struct {
@@ -17,6 +19,10 @@ type userResponse struct {
 	Email     string    `json:"email"`
 	Role      string    `json:"role"`
 	CreatedAt time.Time `json:"created_at"`
+	// PermissionDefault nil means the user inherits the global ruleset
+	// default; PermissionRules is the user's rule list, empty when none.
+	PermissionDefault *string `json:"permission_default"`
+	PermissionRules   string  `json:"permission_rules"`
 }
 
 func userToResponse(u auth.UserInfo) userResponse {
@@ -36,7 +42,18 @@ func newListUsersHandler(deps Deps) fiber.Handler {
 		}
 		out := make([]userResponse, 0, len(users))
 		for _, u := range users {
-			out = append(out, userToResponse(u))
+			item := userToResponse(u)
+			perms, err := deps.Store.GetUserPermissions(c.Context(), u.ID)
+			if err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return err
+			}
+			if err == nil {
+				if perms.DefaultVerdict.Valid {
+					item.PermissionDefault = &perms.DefaultVerdict.String
+				}
+				item.PermissionRules = perms.Rules
+			}
+			out = append(out, item)
 		}
 		return c.JSON(out)
 	}
@@ -107,6 +124,89 @@ func newResetUserPasswordHandler(deps Deps) fiber.Handler {
 		}
 
 		return c.JSON(userToResponse(user))
+	}
+}
+
+type updateUserPermissionsRequest struct {
+	// DefaultVerdict nil means inherit the global ruleset default.
+	DefaultVerdict *string `json:"default_verdict"`
+	Rules          string  `json:"rules"`
+}
+
+type userPermissionsResponse struct {
+	DefaultVerdict *string `json:"default_verdict"`
+	Rules          string  `json:"rules"`
+}
+
+func userPermissionsToResponse(row db.UserPermission) userPermissionsResponse {
+	out := userPermissionsResponse{Rules: row.Rules}
+	if row.DefaultVerdict.Valid {
+		out.DefaultVerdict = &row.DefaultVerdict.String
+	}
+	return out
+}
+
+func newUpdateUserPermissionsHandler(deps Deps) fiber.Handler {
+	return func(c fiber.Ctx) error {
+		id, err := strconv.ParseInt(c.Params("id"), 10, 64)
+		if err != nil || id <= 0 {
+			return fiber.NewError(fiber.StatusBadRequest, "invalid user id")
+		}
+
+		var req updateUserPermissionsRequest
+		if err := c.Bind().JSON(&req); err != nil {
+			return fiber.NewError(fiber.StatusBadRequest, "invalid request body")
+		}
+
+		var defaultVerdict sql.NullString
+		if req.DefaultVerdict != nil {
+			v, err := permission.ParseVerdict(*req.DefaultVerdict)
+			if err != nil {
+				return fiber.NewError(fiber.StatusBadRequest, err.Error())
+			}
+			defaultVerdict = sql.NullString{String: string(v), Valid: true}
+		}
+		if _, err := permission.ParseRules(req.Rules); err != nil {
+			return fiber.NewError(fiber.StatusBadRequest, err.Error())
+		}
+
+		if _, err := deps.Auth.GetUser(c.Context(), id); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return fiber.NewError(fiber.StatusNotFound, "user not found")
+			}
+			return err
+		}
+
+		row, err := deps.Store.UpsertUserPermissions(c.Context(), db.UpsertUserPermissionsParams{
+			UserID:         id,
+			DefaultVerdict: defaultVerdict,
+			Rules:          req.Rules,
+		})
+		if err != nil {
+			return err
+		}
+		return c.JSON(userPermissionsToResponse(row))
+	}
+}
+
+func newClearUserPermissionsHandler(deps Deps) fiber.Handler {
+	return func(c fiber.Ctx) error {
+		id, err := strconv.ParseInt(c.Params("id"), 10, 64)
+		if err != nil || id <= 0 {
+			return fiber.NewError(fiber.StatusBadRequest, "invalid user id")
+		}
+
+		if _, err := deps.Auth.GetUser(c.Context(), id); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return fiber.NewError(fiber.StatusNotFound, "user not found")
+			}
+			return err
+		}
+
+		if err := deps.Store.DeleteUserPermissions(c.Context(), id); err != nil {
+			return err
+		}
+		return c.SendStatus(fiber.StatusNoContent)
 	}
 }
 

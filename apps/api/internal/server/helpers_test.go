@@ -61,7 +61,13 @@ func newTestAppFull(t *testing.T, provider llm.Provider, tools tool.Executor, pe
 
 	s := store.New(dbConn)
 	resolver := &chat.LLMResolver{Store: s, Default: provider}
-	engine := &chat.Engine{Store: s, LLM: resolver, Tools: tools, Permissions: perms}
+	engine := &chat.Engine{
+		Store:              s,
+		LLM:                resolver,
+		Tools:              tools,
+		Permissions:        perms,
+		PermissionResolver: &chat.PermissionOverlay{Store: s},
+	}
 	app := server.New(server.Deps{Store: s, Auth: a, Chat: engine})
 	return app, s, dbConn
 }

@@ -410,6 +410,8 @@ export interface AdminUser {
   email: string;
   role: string;
   created_at: string;
+  permission_default: string | null;
+  permission_rules: string;
 }
 
 export async function listUsers(): Promise<AdminUser[]> {
@@ -430,4 +432,32 @@ export async function deleteUser(id: number): Promise<void> {
 export async function resetUserPassword(id: number, password: string): Promise<AdminUser> {
   const res = await postJSON(`/api/v1/users/${id}/reset-password`, { password });
   return (await res.json()) as AdminUser;
+}
+
+export interface UserPermissions {
+  default_verdict: string | null;
+  rules: string;
+}
+
+// Admin-only. A null default_verdict means the user inherits the global
+// ruleset; rules are appended after the global rules.
+export async function updateUserPermissions(
+  id: number,
+  defaultVerdict: string | null,
+  rules: string,
+): Promise<UserPermissions> {
+  const res = await fetch(`/api/v1/users/${id}/permissions`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ default_verdict: defaultVerdict, rules }),
+    credentials: "include",
+  });
+  if (!res.ok) {
+    throw new Error(await parseError(res));
+  }
+  return (await res.json()) as UserPermissions;
+}
+
+export async function clearUserPermissions(id: number): Promise<void> {
+  await deleteRequest(`/api/v1/users/${id}/permissions`);
 }

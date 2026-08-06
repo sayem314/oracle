@@ -78,10 +78,11 @@ func main() {
 	st := store.New(sqlDB)
 	ruleset := permission.NewRuleset(cfg.PermissionDefault, cfg.PermissionRules)
 	engine := &chat.Engine{
-		Store:       st,
-		LLM:         &chat.LLMResolver{Store: st, Default: provider},
-		Tools:       tools,
-		Permissions: ruleset,
+		Store:              st,
+		LLM:                &chat.LLMResolver{Store: st, Default: provider},
+		Tools:              tools,
+		Permissions:        ruleset,
+		PermissionResolver: &chat.PermissionOverlay{Store: st},
 	}
 
 	sched := scheduler.New(st, engine.AsHeadless(), scheduler.DefaultInterval)

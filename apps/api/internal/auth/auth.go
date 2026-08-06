@@ -63,6 +63,7 @@ type Auth interface {
 	HasUsers(ctx context.Context) (bool, error)
 	Role(ctx context.Context, userID int64) (string, error)
 	CreateUser(ctx context.Context, email, password string) (UserInfo, error)
+	GetUser(ctx context.Context, userID int64) (UserInfo, error)
 	ListUsers(ctx context.Context) ([]UserInfo, error)
 	ResetPassword(ctx context.Context, userID int64, newPassword string) (UserInfo, error)
 	DeleteUser(ctx context.Context, userID int64) error
@@ -174,6 +175,10 @@ func (a *limenAuth) CreateUser(ctx context.Context, email, password string) (Use
 		return UserInfo{}, err
 	}
 	return a.getUser(ctx, id)
+}
+
+func (a *limenAuth) GetUser(ctx context.Context, userID int64) (UserInfo, error) {
+	return a.getUser(ctx, userID)
 }
 
 func (a *limenAuth) ListUsers(ctx context.Context) ([]UserInfo, error) {

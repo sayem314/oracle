@@ -1,6 +1,14 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { listUsers, createUser, deleteUser, resetUserPassword, type AdminUser } from "$lib/api";
+  import {
+    listUsers,
+    createUser,
+    deleteUser,
+    resetUserPassword,
+    updateUserPermissions,
+    clearUserPermissions,
+    type AdminUser,
+  } from "$lib/api";
   import type { PageData } from "./$types";
 
   let { data } = $props<{ data: PageData }>();
@@ -17,6 +25,11 @@
   let resettingId = $state<number | null>(null);
   let resetPassword = $state("");
   let resetting = $state(false);
+
+  let editingPermsId = $state<number | null>(null);
+  let permDefault = $state("inherit");
+  let permRules = $state("");
+  let permSaving = $state(false);
 
   let isAdmin = $derived(data.user?.role === "admin");
   let myEmail = $derived(data.user?.email ?? "");
@@ -83,6 +96,48 @@
     }
   }
 
+  async function editPerms(u: AdminUser) {
+    editingPermsId = u.id;
+    permDefault = u.permission_default ?? "inherit";
+    permRules = u.permission_rules;
+    permSaving = false;
+    error = "";
+  }
+
+  async function savePerms() {
+    if (permSaving || editingPermsId === null) return;
+    permSaving = true;
+    error = "";
+    notice = "";
+    try {
+      await updateUserPermissions(editingPermsId, permDefault === "inherit" ? null : permDefault, permRules);
+      editingPermsId = null;
+      notice = "Permissions saved.";
+      await refresh();
+    } catch (err) {
+      error = err instanceof Error ? err.message : "failed to save permissions";
+    } finally {
+      permSaving = false;
+    }
+  }
+
+  async function clearPerms() {
+    if (permSaving || editingPermsId === null) return;
+    permSaving = true;
+    error = "";
+    notice = "";
+    try {
+      await clearUserPermissions(editingPermsId);
+      editingPermsId = null;
+      notice = "Permissions cleared. The user inherits the server defaults.";
+      await refresh();
+    } catch (err) {
+      error = err instanceof Error ? err.message : "failed to clear permissions";
+    } finally {
+      permSaving = false;
+    }
+  }
+
   function formatWhen(iso: string): string {
     const d = new Date(iso);
     if (Number.isNaN(d.getTime())) return "—";
@@ -136,6 +191,12 @@
                 <span class="user-email">{u.email}</span>
                 <span class="badge" class:admin={u.role === "admin"}>{u.role}</span>
                 <span class="user-meta">created {formatWhen(u.created_at)}</span>
+                {#if u.permission_default || u.permission_rules}
+                  <span class="perm-badge" title="Tool permission overrides">
+                    default {u.permission_default ?? "inherit"}
+                    {#if u.permission_rules}&nbsp;&middot;&nbsp;{u.permission_rules}{/if}
+                  </span>
+                {/if}
               </div>
               {#if u.email === myEmail}
                 <span class="you">you</span>
@@ -165,8 +226,39 @@
                     {resetting ? "Saving..." : "Save"}
                   </button>
                 </form>
+              {:else if editingPermsId === u.id}
+                <form
+                  class="reset-form perms-form"
+                  onsubmit={(e) => {
+                    e.preventDefault();
+                    void savePerms();
+                  }}
+                >
+                  <select bind:value={permDefault}>
+                    <option value="inherit">Inherit server default</option>
+                    <option value="allow">Allow</option>
+                    <option value="deny">Deny</option>
+                    <option value="ask">Ask first</option>
+                  </select>
+                  <input
+                    type="text"
+                    bind:value={permRules}
+                    placeholder="tool:verdict, ... e.g. get_time:allow"
+                    autocapitalize="off"
+                    autocorrect="off"
+                    spellcheck="false"
+                  />
+                  <button class="primary small" type="submit" disabled={permSaving}>
+                    {permSaving ? "Saving..." : "Save"}
+                  </button>
+                  <button class="ghost" type="button" onclick={() => void clearPerms()} disabled={permSaving}
+                    >Clear</button
+                  >
+                  <button class="ghost" type="button" onclick={() => (editingPermsId = null)}>Cancel</button>
+                </form>
               {:else}
                 <div class="row-actions">
+                  <button class="ghost" onclick={() => editPerms(u)}>Permissions</button>
                   <button
                     class="ghost"
                     onclick={() => {
@@ -384,5 +476,27 @@
 
   .reset-form input:focus {
     border-color: var(--accent);
+  }
+
+  .reset-form select {
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 7px 10px;
+    font-size: 13px;
+    outline: none;
+  }
+
+  .perms-form input {
+    width: 260px;
+  }
+
+  .perm-badge {
+    font-size: 12px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: var(--bg-input);
+    color: var(--text-dim);
   }
 </style>
