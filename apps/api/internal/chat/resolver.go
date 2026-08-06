@@ -28,6 +28,11 @@ func (r *LLMResolver) Resolve(ctx context.Context, model string) (llm.Provider, 
 		return nil, fmt.Errorf("resolve llm provider: %w", err)
 	}
 
+	// The mock ignores credentials and models, so it needs no further config.
+	if profile.Provider == llm.ProviderMock {
+		return llm.New(llm.Options{Provider: llm.ProviderMock})
+	}
+
 	if model == "" {
 		if model = profile.Model; model == "" {
 			return nil, errors.New("no model configured for the LLM provider")

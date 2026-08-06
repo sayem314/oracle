@@ -361,6 +361,7 @@ export interface LLMProvider {
 }
 
 export interface LLMProviderInput {
+  provider: string;
   base_url: string;
   api_key?: string;
   model?: string;

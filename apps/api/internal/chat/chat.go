@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
+	"sync/atomic"
 
 	"github.com/sayem314/oracle/apps/api/internal/llm"
 	"github.com/sayem314/oracle/apps/api/internal/permission"
@@ -86,6 +88,13 @@ type Resolver interface {
 	Resolve(ctx context.Context, model string) (llm.Provider, error)
 }
 
+// rulesetRef is the shared permission store so headless copies observe
+// Settings saves made on the interactive engine.
+type rulesetRef struct {
+	mu    sync.RWMutex
+	rules *permission.Ruleset
+}
+
 // Engine drives the model->tool->model loop shared by the chat and approval
 // handlers and the scheduler.
 type Engine struct {
@@ -93,6 +102,10 @@ type Engine struct {
 	LLM         Resolver
 	Tools       tool.Executor
 	Permissions *permission.Ruleset
+	// rules is the live ruleset holder once SetPermissions has run, shared by
+	// reference with headless copies. A nil Load means no save yet; callers
+	// then read Permissions directly, which never changes after construction.
+	rules atomic.Pointer[rulesetRef]
 	// Compaction controls context condensation and tool-output truncation when
 	// the assembled history grows large. The zero value disables both.
 	Compaction CompactionConfig
@@ -100,16 +113,51 @@ type Engine struct {
 }
 
 // AsHeadless returns a copy for unattended runs, where ask verdicts become
-// denies because nobody is there to answer.
+// denies because nobody is there to answer. The copy shares the ruleset
+// reference so later saves apply to scheduled runs too.
 func (e *Engine) AsHeadless() *Engine {
-	c := *e
-	c.Headless = true
-	return &c
+	ref := e.rulesRef()
+	c := &Engine{
+		Store:       e.Store,
+		LLM:         e.LLM,
+		Tools:       e.Tools,
+		Compaction:  e.Compaction,
+		Permissions: e.Permissions,
+		Headless:    true,
+	}
+	c.rules.Store(ref)
+	return c
 }
 
 // SetPermissions swaps the global ruleset, used when Settings save new rules.
 func (e *Engine) SetPermissions(rules *permission.Ruleset) {
-	e.Permissions = rules
+	ref := e.rulesRef()
+	ref.mu.Lock()
+	ref.rules = rules
+	ref.mu.Unlock()
+}
+
+// currentPermissions returns the ruleset in effect, read under the swap lock
+// so a concurrent settings save is never torn.
+func (e *Engine) currentPermissions() *permission.Ruleset {
+	if ref := e.rules.Load(); ref != nil {
+		ref.mu.RLock()
+		defer ref.mu.RUnlock()
+		return ref.rules
+	}
+	return e.Permissions
+}
+
+// rulesRef returns the shared holder, creating it on first use.
+func (e *Engine) rulesRef() *rulesetRef {
+	if ref := e.rules.Load(); ref != nil {
+		return ref
+	}
+	ref := &rulesetRef{rules: e.Permissions}
+	if !e.rules.CompareAndSwap(nil, ref) {
+		return e.rules.Load()
+	}
+	return ref
 }
 
 // Run drives rounds until the model produces a final answer, tool approval
@@ -121,7 +169,7 @@ func (e *Engine) Run(ctx context.Context, sink Sink, sessionID int64, req llm.Re
 	if err != nil {
 		return err
 	}
-	rules := e.Permissions
+	rules := e.currentPermissions()
 	tools := e.Tools.Definitions()
 
 	if e.Compaction.Enabled() {

@@ -7,7 +7,6 @@
     getSettings,
     updateSettings,
     changePassword,
-    type LLMProvider,
   } from "$lib/api";
 
   let { data } = $props<{ data: import("./$types").PageData }>();
@@ -22,7 +21,7 @@
   let pwNotice = $state("");
   let pwValid = $derived(curPw !== "" && newPw.length >= 8 && newPw === confirmPw);
 
-  let provider = $state<LLMProvider | null>(null);
+  let providerType = $state("openai");
   let baseUrl = $state("");
   let apiKey = $state("");
   let model = $state("");
@@ -50,7 +49,7 @@
     loading = true;
     try {
       const [p, s] = await Promise.all([getLLMProvider(), getSettings()]);
-      provider = p;
+      providerType = p.provider;
       baseUrl = p.base_url;
       model = p.model;
       hasApiKey = p.has_api_key;
@@ -86,6 +85,7 @@
     pNotice = "";
     try {
       const updated = await updateLLMProvider({
+        provider: providerType,
         base_url: baseUrl.trim(),
         api_key: apiKey.trim() || undefined,
         model: model.trim() || undefined,
@@ -168,13 +168,21 @@
           <div class="field">
             <label>
               Provider type
-              <input type="text" value={provider?.provider ?? ""} disabled />
+              <select bind:value={providerType}>
+                <option value="mock">mock (development)</option>
+                <option value="openai">openai (OpenAI-compatible)</option>
+              </select>
             </label>
           </div>
           <div class="field">
             <label>
               Base URL
-              <input type="url" bind:value={baseUrl} placeholder="https://api.openai.com/v1" required />
+              <input
+                type="url"
+                bind:value={baseUrl}
+                placeholder="https://api.openai.com/v1"
+                disabled={providerType === "mock"}
+              />
             </label>
           </div>
           <div class="field">
@@ -185,6 +193,7 @@
                 bind:value={apiKey}
                 placeholder={hasApiKey ? "Stored (leave blank to keep)" : "sk-..."}
                 autocomplete="off"
+                disabled={providerType === "mock"}
               />
             </label>
           </div>
@@ -228,8 +237,8 @@
           </div>
           <div class="field">
             <label>
-              Rules (name=allow, name=deny, one per line)
-              <textarea bind:value={permissionRules} rows="6" placeholder="net.file_read=ask"></textarea>
+              Rules (tool:verdict, comma separated, e.g. web_fetch:allow, file_write:deny)
+              <textarea bind:value={permissionRules} rows="6" placeholder="web_fetch:ask, file_write:deny"></textarea>
             </label>
           </div>
           <div class="actions">

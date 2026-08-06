@@ -143,3 +143,18 @@ func TestLLMResolverEmptyModelFails(t *testing.T) {
 	_, err = r.Resolve(t.Context(), "")
 	require.ErrorContains(t, err, "no model configured")
 }
+
+func TestLLMResolverMockProviderNeedsNoModel(t *testing.T) {
+	s, _ := newStore(t)
+	r := &chat.LLMResolver{Store: s, Default: llm.NewMock()}
+
+	_, err := s.UpsertLLMProvider(t.Context(), db.UpsertLLMProviderParams{
+		Provider: "mock",
+		Model:    "",
+	})
+	require.NoError(t, err)
+
+	got, err := r.Resolve(t.Context(), "")
+	require.NoError(t, err)
+	chatOnce(t, got)
+}

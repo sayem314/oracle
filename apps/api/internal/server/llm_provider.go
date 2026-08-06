@@ -34,14 +34,16 @@ type llmProviderRequest struct {
 
 func (req llmProviderRequest) normalize() (string, string, error) {
 	provider := strings.TrimSpace(req.Provider)
-	if provider != llm.ProviderOpenAI {
-		return "", "", fiber.NewError(fiber.StatusBadRequest, "provider must be openai")
+	switch provider {
+	case llm.ProviderOpenAI:
+		if strings.TrimSpace(req.BaseURL) == "" {
+			return "", "", fiber.NewError(fiber.StatusBadRequest, "base_url is required")
+		}
+	case llm.ProviderMock:
+	default:
+		return "", "", fiber.NewError(fiber.StatusBadRequest, "provider must be mock or openai")
 	}
-	baseURL := strings.TrimSpace(req.BaseURL)
-	if baseURL == "" {
-		return "", "", fiber.NewError(fiber.StatusBadRequest, "base_url is required")
-	}
-	return provider, baseURL, nil
+	return provider, strings.TrimSpace(req.BaseURL), nil
 }
 
 func newGetLLMProviderHandler(deps Deps) fiber.Handler {
