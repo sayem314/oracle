@@ -7,10 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/http/cookiejar"
-	"net/netip"
 	"net/url"
 	"strings"
 	"time"
@@ -25,99 +23,12 @@ const (
 	fetchTimeout  = 15 * time.Second
 )
 
-// blockedNets lists special-purpose ranges a fetch must never dial (SSRF
-// guard). Private/loopback/link-local/metadata/benchmark/doc ranges.
-var blockedNets = func() []netip.Prefix {
-	raw := []string{
-		// IPv4 special-purpose ranges (RFC 5735, 1918, 6598, 6890).
-		"0.0.0.0/8",
-		"10.0.0.0/8",
-		"100.64.0.0/10",
-		"127.0.0.0/8",
-		"169.254.0.0/16",
-		"172.16.0.0/12",
-		"192.0.0.0/24",
-		"192.0.2.0/24",
-		"192.168.0.0/16",
-		"198.18.0.0/15",
-		"198.51.100.0/24",
-		"203.0.113.0/24",
-		"224.0.0.0/4",
-		"240.0.0.0/4",
-		// IPv6 special-purpose ranges (RFC 4291, 3849, 5180).
-		"::/128",
-		"::1/128",
-		"64:ff9b::/96",
-		"100::/64",
-		"2001:db8::/32",
-		"fc00::/7",
-		"fe80::/10",
-		"ff00::/8",
-	}
-	out := make([]netip.Prefix, 0, len(raw))
-	for _, s := range raw {
-		out = append(out, netip.MustParsePrefix(s))
-	}
-	return out
-}()
-
-func ipBlocked(ip netip.Addr) bool {
-	if ip.Is4In6() {
-		ip = ip.Unmap()
-	}
-	for _, p := range blockedNets {
-		if p.Contains(ip) {
-			return true
-		}
-	}
-	return false
-}
-
-// ssrfDialContext resolves names itself and refuses private targets, then
-// dials the validated IP directly so the check cannot be re-pointed at a
-// sneaky address between resolution and connect.
-func ssrfDialContext(ctx context.Context, network, addr string) (net.Conn, error) {
-	host, port, err := net.SplitHostPort(addr)
-	if err != nil {
-		return nil, err
-	}
-	ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
-	if err != nil {
-		return nil, fmt.Errorf("resolve %s: %w", host, err)
-	}
-	var lastErr error
-	for _, ip := range ips {
-		a, ok := netip.AddrFromSlice(ip.IP)
-		if !ok {
-			continue
-		}
-		if ipBlocked(a) {
-			lastErr = fmt.Errorf("target %s is in a private or reserved range", a)
-			continue
-		}
-		conn, err := (&net.Dialer{}).DialContext(ctx, network, net.JoinHostPort(a.String(), port))
-		if err == nil {
-			return conn, nil
-		}
-		lastErr = err
-	}
-	if lastErr == nil {
-		lastErr = errors.New("no usable addresses")
-	}
-	return nil, lastErr
-}
-
-// ssrfClient is the transport web_fetch and web_search use in production.
-// Proxying is disabled so the caller's network cannot be used to hop around
-// the guard. The cookie jar persists DDG's ax session cookie between the
+// httpClient is the shared plain client web_fetch and web_search use in
+// production. The cookie jar persists DDG's ax session cookie between the
 // seed GET and the search POST.
-func ssrfClient() *http.Client {
+func httpClient() *http.Client {
 	return &http.Client{
 		Timeout: fetchTimeout,
-		Transport: &http.Transport{
-			DialContext: ssrfDialContext,
-			Proxy:       nil,
-		},
 		Jar: func() http.CookieJar {
 			jar, _ := cookiejar.New(nil)
 			return jar
@@ -131,7 +42,7 @@ func webFetchTool(client *http.Client) Tool {
 		Definition: llm.Tool{
 			Name: "web_fetch",
 			Description: "Fetch a URL over HTTP or HTTPS and return its content as text. " +
-				"HTML pages have tags stripped. Private, loopback, and reserved addresses are refused.",
+				"HTML pages have tags stripped.",
 			Parameters: schema,
 		},
 		Execute: webFetchExecute(client),

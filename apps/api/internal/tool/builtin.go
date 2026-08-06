@@ -12,8 +12,8 @@ import (
 func NewBuiltin() []Tool {
 	return []Tool{
 		getTimeTool(),
-		webFetchTool(ssrfClient()),
-		webSearchTool(ssrfClient()),
+		webFetchTool(httpClient()),
+		webSearchTool(httpClient()),
 		mathEvalTool(),
 	}
 }

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"net/netip"
 	"strings"
 	"testing"
 
@@ -13,8 +12,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// plainClient dials anything; injected so happy-path tests can hit httptest
-// servers on loopback, which the production ssrfClient refuses on purpose.
+// plainClient dials anything; injected so tests can hit httptest servers on
+// loopback without relying on the shared production httpClient.
 func plainClient() *http.Client { return http.DefaultClient }
 
 func TestWebFetchRegistered(t *testing.T) {
@@ -104,45 +103,6 @@ func TestWebFetchInvalidArgs(t *testing.T) {
 	tl := webFetchTool(plainClient())
 	_, err := tl.Execute(context.Background(), json.RawMessage(`not json`))
 	require.Error(t, err)
-}
-
-func TestIPBlocked(t *testing.T) {
-	cases := []struct {
-		ip   string
-		want bool
-	}{
-		{"127.0.0.1", true},
-		{"10.0.0.1", true},
-		{"192.168.1.1", true},
-		{"172.16.0.1", true},
-		{"169.254.169.254", true},
-		{"100.64.0.1", true},
-		{"0.0.0.0", true},
-		{"224.0.0.1", true},
-		{"8.8.8.8", false},
-		{"93.184.216.34", false},
-		{"2001:db8::1", true},
-		{"::1", true},
-		{"fe80::1", true},
-		{"2606:4700:4700::1111", false},
-	}
-	for _, tc := range cases {
-		addr, err := netip.ParseAddr(tc.ip)
-		require.NoError(t, err, "parse %s", tc.ip)
-		assert.Equal(t, tc.want, ipBlocked(addr), "%s", tc.ip)
-	}
-}
-
-func TestWebFetchSSRFBlocksLoopback(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte("should never be reached"))
-	}))
-	defer srv.Close()
-
-	tl := webFetchTool(ssrfClient())
-	_, err := tl.Execute(context.Background(), mustArgs(`{"url":"`+srv.URL+`"}`))
-	require.Error(t, err)
-	assert.ErrorContains(t, err, "private or reserved")
 }
 
 func mustArgs(s string) json.RawMessage {

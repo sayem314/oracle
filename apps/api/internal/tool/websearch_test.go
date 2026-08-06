@@ -118,13 +118,3 @@ func TestWebSearchInvalidArgs(t *testing.T) {
 	_, err := tl.Execute(context.Background(), json.RawMessage(`not json`))
 	require.Error(t, err)
 }
-
-func TestWebSearchSSRFBlocksLoopback(t *testing.T) {
-	srv, _ := searchHTTPServer(searchPage)
-	defer srv.Close()
-
-	tl := webSearchAt(ssrfClient(), srv.URL)
-	_, err := tl.Execute(context.Background(), mustArgs(`{"query":"x"}`))
-	require.Error(t, err)
-	assert.ErrorContains(t, err, "private or reserved")
-}
