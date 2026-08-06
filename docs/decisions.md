@@ -2,6 +2,12 @@
 
 Lightweight ADRs. Latest first.
 
+## 2026-08-06: math_eval builtin tool
+
+- LLMs are systematically bad at exact arithmetic, and the toolbox had no way to check its work, so `math_eval` adds a dependency-free recursive-descent evaluator. Grammar: sum/product/unary/power/primary with conventional precedence — power binds tighter than unary minus (`-2^2 = -4`, not `4`) and is right-associative (`2^3^2 = 512`). Functions: sqrt, abs, round, floor, ceil, trig (radians), exp, ln, log10, min/max.
+- Chose a hand-written 300-line parser over pulling in an expression-EVAL library (expr, govaluate, etc.). A DSL library's surface (closures, scope, method calls) is a much larger security review than eighteen operators and twelve named functions; a small parser has no variables or side channels by construction. Unlike web_fetch/web_search it needs no client injection and is deterministic, so it is cheap to unit test table-driven.
+- Non-finite results are refused ("not a finite number") rather than returned as `NaN`/`Inf` strings; integer results print without a decimal point.
+
 ## 2026-08-06: web_search builtin tool (keyless DuckDuckGo)
 
 - web_fetch alone forced the model to guess URLs, so the toolbox gains `web_search`, which POSTs a query to DuckDuckGo's budget html endpoint and returns the top five titles, URLs, and snippets. No API key: the endpoint is the keyless, ToS-covered form scrape that DDG serves to anonymous browsers.

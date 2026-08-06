@@ -14,6 +14,7 @@ func NewBuiltin() []Tool {
 		getTimeTool(),
 		webFetchTool(ssrfClient()),
 		webSearchTool(ssrfClient()),
+		mathEvalTool(),
 	}
 }
 
