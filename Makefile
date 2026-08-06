@@ -1,4 +1,4 @@
-.PHONY: help dev run-api run-web build test lint fmt openapi-lint sqlc migration docker-build docker-up docker-down docker-logs backup backup-restore
+.PHONY: help dev run-api run-web build test lint fmt openapi-lint sqlc migration docker-build docker-up docker-down docker-logs backup backup-restore stats
 
 help: ## Show available commands
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
@@ -31,6 +31,9 @@ fmt: ## Format Go and frontend code
 
 openapi-lint: ## Validate docs/openapi.yaml with Redocly
 	bunx @redocly/cli lint docs/openapi.yaml
+
+stats: ## Recount source-line stats and save to docs/code_stats.md
+	./scripts/stats.sh
 
 sqlc: ## Regenerate type-safe query code from SQL (requires sqlc CLI)
 	sqlc -f apps/api/sqlc.yaml generate

@@ -17,7 +17,8 @@ Everything runs from the repo root:
 | `make test`        | Go tests + svelte-check                       |
 | `make lint`        | golangci-lint + prettier check + svelte-check |
 | `make fmt`         | gofmt + prettier write                        |
-| `make sqlc`        | Regenerate type-safe query code from SQL      |
+| `make sqlc`        | Regenerate type-safe query code from SQL |
+| `make stats`       | Recount source-line stats (see `scripts/stats.sh` + `docs/code_stats.md`) |
 | `make docker-up`   | Build and run the full stack via Docker       |
 | `make docker-down` | Stop the Docker Compose stack                 |
 
