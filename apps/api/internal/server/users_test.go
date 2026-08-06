@@ -182,3 +182,65 @@ func TestDeleteUser(t *testing.T) {
 		assert.Equal(t, int64(0), count)
 	})
 }
+
+func TestResetUserPassword(t *testing.T) {
+	app, _, dbConn := newTestApp(t, llm.NewMock())
+	adminCookie, _ := signUp(t, app, dbConn, "admin@example.com")
+
+	res := doUsersRequest(t, app, http.MethodPost, "/api/v1/users", adminCookie, map[string]any{
+		"email":    "member@example.com",
+		"password": "Secure1pass",
+	})
+	require.Equal(t, http.StatusCreated, res.StatusCode)
+	member := decodeUser(t, res)
+	memberCookie := signIn(t, app, "member@example.com", "Secure1pass")
+
+	t.Run("member cannot reset passwords", func(t *testing.T) {
+		res := doUsersRequest(t, app, http.MethodPost, "/api/v1/users/"+itoa(member.ID)+"/reset-password", memberCookie, map[string]any{
+			"password": "Newpass1!",
+		})
+		assert.Equal(t, http.StatusForbidden, res.StatusCode)
+	})
+
+	t.Run("unknown user", func(t *testing.T) {
+		res := doUsersRequest(t, app, http.MethodPost, "/api/v1/users/99999/reset-password", adminCookie, map[string]any{
+			"password": "Newpass1!",
+		})
+		assert.Equal(t, http.StatusNotFound, res.StatusCode)
+	})
+
+	t.Run("missing password", func(t *testing.T) {
+		res := doUsersRequest(t, app, http.MethodPost, "/api/v1/users/"+itoa(member.ID)+"/reset-password", adminCookie, map[string]any{})
+		assert.Equal(t, http.StatusBadRequest, res.StatusCode)
+		assert.Equal(t, "password is required", decodeErrorMessage(t, res))
+	})
+
+	t.Run("weak new password surfaces limen policy", func(t *testing.T) {
+		res := doUsersRequest(t, app, http.MethodPost, "/api/v1/users/"+itoa(member.ID)+"/reset-password", adminCookie, map[string]any{
+			"password": "short",
+		})
+		assert.Equal(t, http.StatusBadRequest, res.StatusCode)
+	})
+
+	t.Run("reset revokes sessions and old password stops working", func(t *testing.T) {
+		res := doUsersRequest(t, app, http.MethodPost, "/api/v1/users/"+itoa(member.ID)+"/reset-password", adminCookie, map[string]any{
+			"password": "Newpass1!",
+		})
+		require.Equal(t, http.StatusOK, res.StatusCode)
+		assert.Equal(t, member.Email, decodeUser(t, res).Email)
+
+		// The member's previous session is dead.
+		res = doUsersRequest(t, app, http.MethodGet, "/api/v1/llm/providers", memberCookie, nil)
+		assert.Equal(t, http.StatusUnauthorized, res.StatusCode)
+
+		// Old password rejected, new one works.
+		req := httptest.NewRequest(http.MethodPost, "/auth/signin/credential", strings.NewReader(`{"credential":"member@example.com","password":"Secure1pass"}`))
+		req.Header.Set("Content-Type", "application/json")
+		res, err := app.Test(req, fiber.TestConfig{Timeout: 0})
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = res.Body.Close() })
+		assert.Equal(t, http.StatusUnauthorized, res.StatusCode)
+
+		signIn(t, app, "member@example.com", "Newpass1!")
+	})
+}

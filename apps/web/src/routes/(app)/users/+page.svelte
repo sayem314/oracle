@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { listUsers, createUser, deleteUser, type AdminUser } from "$lib/api";
+  import { listUsers, createUser, deleteUser, resetUserPassword, type AdminUser } from "$lib/api";
   import type { PageData } from "./$types";
 
   let { data } = $props<{ data: PageData }>();
@@ -13,6 +13,10 @@
   let email = $state("");
   let password = $state("");
   let saving = $state(false);
+
+  let resettingId = $state<number | null>(null);
+  let resetPassword = $state("");
+  let resetting = $state(false);
 
   let isAdmin = $derived(data.user?.role === "admin");
   let myEmail = $derived(data.user?.email ?? "");
@@ -59,6 +63,23 @@
       await refresh();
     } catch (err) {
       error = err instanceof Error ? err.message : "failed to delete user";
+    }
+  }
+
+  async function resetPw(u: AdminUser) {
+    if (resetting || !resetPassword) return;
+    resetting = true;
+    error = "";
+    notice = "";
+    try {
+      await resetUserPassword(u.id, resetPassword);
+      resetPassword = "";
+      resettingId = null;
+      notice = `Reset ${u.email}'s password. They are signed out of other devices.`;
+    } catch (err) {
+      error = err instanceof Error ? err.message : "failed to reset password";
+    } finally {
+      resetting = false;
     }
   }
 
@@ -118,8 +139,43 @@
               </div>
               {#if u.email === myEmail}
                 <span class="you">you</span>
+              {:else if resettingId === u.id}
+                <form
+                  class="reset-form"
+                  onsubmit={(e) => {
+                    e.preventDefault();
+                    void resetPw(u);
+                  }}
+                >
+                  <input
+                    type="password"
+                    bind:value={resetPassword}
+                    placeholder="New password (at least 8 characters)"
+                    autocomplete="off"
+                  />
+                  <button
+                    class="ghost"
+                    type="button"
+                    onclick={() => {
+                      resettingId = null;
+                      resetPassword = "";
+                    }}>Cancel</button
+                  >
+                  <button class="primary small" type="submit" disabled={resetting || resetPassword.length < 8}>
+                    {resetting ? "Saving..." : "Save"}
+                  </button>
+                </form>
               {:else}
-                <button class="delete" onclick={() => void remove(u)}>Delete</button>
+                <div class="row-actions">
+                  <button
+                    class="ghost"
+                    onclick={() => {
+                      resettingId = u.id;
+                      resetPassword = "";
+                    }}>Reset password</button
+                  >
+                  <button class="delete" onclick={() => void remove(u)}>Delete</button>
+                </div>
               {/if}
             </div>
           {/each}
@@ -285,5 +341,48 @@
 
   .delete:hover {
     border-color: var(--danger);
+  }
+
+  .row-actions {
+    display: flex;
+    gap: 8px;
+  }
+
+  .ghost {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--bg-input);
+    color: var(--text);
+    padding: 6px 12px;
+    font-size: 13px;
+  }
+
+  .ghost:hover {
+    border-color: var(--accent);
+  }
+
+  .primary.small {
+    font-size: 13px;
+    padding: 7px 12px;
+  }
+
+  .reset-form {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .reset-form input {
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 7px 10px;
+    font-size: 13px;
+    outline: none;
+    width: 220px;
+  }
+
+  .reset-form input:focus {
+    border-color: var(--accent);
   }
 </style>

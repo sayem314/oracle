@@ -64,6 +64,7 @@ type Auth interface {
 	Role(ctx context.Context, userID int64) (string, error)
 	CreateUser(ctx context.Context, email, password string) (UserInfo, error)
 	ListUsers(ctx context.Context) ([]UserInfo, error)
+	ResetPassword(ctx context.Context, userID int64, newPassword string) (UserInfo, error)
 	DeleteUser(ctx context.Context, userID int64) error
 }
 
@@ -211,6 +212,30 @@ func (a *limenAuth) DeleteUser(ctx context.Context, userID int64) error {
 		return sql.ErrNoRows
 	}
 	return nil
+}
+
+// ResetPassword sets a new password for a user without knowing the old one:
+// the plugin's reset flow generates a token in-process (no email involved,
+// verification is disabled) and applies it. Existing sessions are revoked
+// because a reset is usually a response to a lost or leaked password.
+func (a *limenAuth) ResetPassword(ctx context.Context, userID int64, newPassword string) (UserInfo, error) {
+	u, err := a.getUser(ctx, userID)
+	if err != nil {
+		return UserInfo{}, err
+	}
+
+	verification, err := a.cp.RequestPasswordReset(ctx, u.Email)
+	if err != nil {
+		return UserInfo{}, toAuthError(err)
+	}
+	if err := a.cp.ResetPassword(ctx, verification.Value, newPassword); err != nil {
+		return UserInfo{}, toAuthError(err)
+	}
+
+	if _, err := a.db.ExecContext(ctx, "DELETE FROM auth_sessions WHERE user_id = ?", userID); err != nil {
+		return UserInfo{}, fmt.Errorf("revoke sessions: %w", err)
+	}
+	return a.getUser(ctx, userID)
 }
 
 func (a *limenAuth) getUser(ctx context.Context, id int64) (UserInfo, error) {

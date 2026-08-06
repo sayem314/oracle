@@ -57,6 +57,7 @@ func New(deps Deps) *fiber.App {
 	users.Get("", newListUsersHandler(deps))
 	users.Post("", newCreateUserHandler(deps))
 	users.Delete("/:id", newDeleteUserHandler(deps))
+	users.Post("/:id/reset-password", newResetUserPasswordHandler(deps))
 
 	return app
 }

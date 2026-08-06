@@ -75,6 +75,41 @@ func newCreateUserHandler(deps Deps) fiber.Handler {
 	}
 }
 
+type resetPasswordRequest struct {
+	Password string `json:"password"`
+}
+
+func newResetUserPasswordHandler(deps Deps) fiber.Handler {
+	return func(c fiber.Ctx) error {
+		id, err := strconv.ParseInt(c.Params("id"), 10, 64)
+		if err != nil || id <= 0 {
+			return fiber.NewError(fiber.StatusBadRequest, "invalid user id")
+		}
+
+		var req resetPasswordRequest
+		if err := c.Bind().JSON(&req); err != nil {
+			return fiber.NewError(fiber.StatusBadRequest, "invalid request body")
+		}
+		if req.Password == "" {
+			return fiber.NewError(fiber.StatusBadRequest, "password is required")
+		}
+
+		user, err := deps.Auth.ResetPassword(c.Context(), id, req.Password)
+		if err != nil {
+			var aerr *auth.Error
+			if errors.As(err, &aerr) {
+				return fiber.NewError(aerr.Status, aerr.Message)
+			}
+			if errors.Is(err, sql.ErrNoRows) {
+				return fiber.NewError(fiber.StatusNotFound, "user not found")
+			}
+			return err
+		}
+
+		return c.JSON(userToResponse(user))
+	}
+}
+
 func newDeleteUserHandler(deps Deps) fiber.Handler {
 	return func(c fiber.Ctx) error {
 		id, err := strconv.ParseInt(c.Params("id"), 10, 64)

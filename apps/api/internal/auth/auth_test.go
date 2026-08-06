@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -122,4 +123,57 @@ func TestRole(t *testing.T) {
 
 	_, err = a.Role(t.Context(), user.ID+999)
 	assert.ErrorIs(t, err, sql.ErrNoRows)
+}
+
+func TestResetPassword(t *testing.T) {
+	a, dbConn := newAuth(t)
+
+	user, err := a.CreateUser(t.Context(), "reset@example.com", "Secure1pass")
+	require.NoError(t, err)
+
+	var before string
+	require.NoError(t, dbConn.QueryRow("SELECT password FROM auth_users WHERE id = ?", user.ID).Scan(&before))
+
+	// The member holds a session that a reset must revoke.
+	_, err = dbConn.Exec("INSERT INTO auth_sessions (id, token, user_id, created_at, expires_at, last_access, metadata) VALUES (?, ?, ?, CURRENT_TIMESTAMP, ?, CURRENT_TIMESTAMP, NULL)",
+		-1, "sess-token", user.ID, time.Now().Add(time.Hour))
+	require.NoError(t, err)
+
+	got, err := a.ResetPassword(t.Context(), user.ID, "Newpass1!")
+	require.NoError(t, err)
+	assert.Equal(t, user.ID, got.ID)
+	assert.Equal(t, user.Email, got.Email)
+
+	var after string
+	require.NoError(t, dbConn.QueryRow("SELECT password FROM auth_users WHERE id = ?", user.ID).Scan(&after))
+	assert.NotEqual(t, before, after)
+
+	var sessions int64
+	require.NoError(t, dbConn.QueryRow("SELECT COUNT(*) FROM auth_sessions WHERE user_id = ?", user.ID).Scan(&sessions))
+	assert.Zero(t, sessions)
+
+	// The generated reset token is consumed, not left for replay.
+	var verifications int64
+	require.NoError(t, dbConn.QueryRow("SELECT COUNT(*) FROM auth_verifications").Scan(&verifications))
+	assert.Zero(t, verifications)
+}
+
+func TestResetPasswordErrors(t *testing.T) {
+	a, _ := newAuth(t)
+
+	t.Run("unknown user", func(t *testing.T) {
+		_, err := a.ResetPassword(t.Context(), 99999, "Newpass1!")
+		assert.ErrorIs(t, err, sql.ErrNoRows)
+	})
+
+	t.Run("weak new password surfaces limen policy", func(t *testing.T) {
+		user, err := a.CreateUser(t.Context(), "weak-reset@example.com", "Secure1pass")
+		require.NoError(t, err)
+
+		_, err = a.ResetPassword(t.Context(), user.ID, "short")
+		require.Error(t, err)
+		var aerr *auth.Error
+		require.ErrorAs(t, err, &aerr)
+		assert.Equal(t, 400, aerr.Status)
+	})
 }

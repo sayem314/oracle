@@ -2,6 +2,12 @@
 
 Lightweight ADRs. Latest first.
 
+## 2026-08-06: Admin password reset (Step 10b follow-up)
+
+- A user who forgets their password is stuck: Limen's `request-reset`/`reset` flow is built for emailed tokens and this instance has no mailer, and `SetPassword` only works for accounts without a password. The admin-facing fix rides the same plugin flow in-process: `auth.Auth.ResetPassword` looks the user up by ID, calls `RequestPasswordReset` (which returns the token directly here, since verification is disabled and no email hook is set) and applies it via `ResetPassword`, so hashing and the password policy stay on Limen's code path exactly like user creation.
+- Existing sessions are revoked after a reset. `ResetPassword` itself does not touch sessions, and a reset is usually the response to a lost or leaked password, so the auth package deletes the user's `auth_sessions` rows. The target user must sign in again with the new password; the reset token is consumed by the plugin, so the flow cannot be replayed.
+- The endpoint is `POST /api/v1/users/:id/reset-password` (admin-only group, same as the rest of `/users`), body `{"password": ...}`, returns the updated user. Limen's policy errors map to 400 as everywhere else, and a missing user is 404. The Users page gained a per-row "Reset password" form; the admin's own row is excluded (they can use the change-password form, which still demands the current password).
+
 ## 2026-08-06: Password change for non-admin users (Step 10b follow-up)
 
 - Non-admin users had no settings surface at all: the Settings page was admin-gated for providers, and rotating a password meant asking the admin to recreate the account. Password change is a pure self-service boundary, so it needed no new backend: Limen already serves `POST /auth/passwords/change` (session-protected, `current_password` + `new_password` + `revoke_other_sessions`, rate-limited 5 per 10 minutes) and the app already mounts Limen's handler under `/auth/*`, so the endpoint was live the day the page gained the form.

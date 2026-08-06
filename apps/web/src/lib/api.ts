@@ -425,3 +425,9 @@ export async function createUser(email: string, password: string): Promise<Admin
 export async function deleteUser(id: number): Promise<void> {
   await deleteRequest(`/api/v1/users/${id}`);
 }
+
+// Admin-only: sets a new password for a user (revokes their other sessions).
+export async function resetUserPassword(id: number, password: string): Promise<AdminUser> {
+  const res = await postJSON(`/api/v1/users/${id}/reset-password`, { password });
+  return (await res.json()) as AdminUser;
+}
