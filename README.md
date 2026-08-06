@@ -40,3 +40,17 @@ bun run dev          # SvelteKit dev server on :5173
 | `go build ./apps/api/...`              | Build all Go packages |
 | `go build -o bin/oracle ./apps/api/cmd/oracle` | Build the API binary into `bin/` |
 | `go test ./apps/api/...`               | Run Go tests          |
+
+## Backup & restore (Docker)
+
+All state lives in the SQLite file on the `oracle-data` volume. Snapshots are
+consistent even while the API is running (SQLite online backup, WAL-safe):
+
+```bash
+make backup                                # snapshots into backups/, keeps 14
+make backup KEEP=30                        # keep more snapshots
+make backup-restore FILE=backups/oracle-20260806-120000.db
+```
+
+The API briefly stops during a restore. Backups contain plaintext LLM API keys,
+so treat the `backups/` directory like a secret store.

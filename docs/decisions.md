@@ -2,6 +2,11 @@
 
 Lightweight ADRs. Latest first.
 
+## 2026-08-06: Backup tooling for the Docker volume (Step 10c follow-up)
+
+- All state is a WAL-mode SQLite file on the named `oracle-data` volume, and until now there was no way to get data out of it: a raw `docker cp`/tar copy of a live WAL database is not guaranteed consistent, and `docker compose down -v` is one command away from total loss. `scripts/backup.sh` wraps one-shot alpine containers that mount the volume: `make backup` takes a snapshot via the sqlite3 CLI's `.backup` (the SQLite online backup API — WAL-aware, no downtime, one self-contained file) and prunes to `KEEP` (default 14); `make backup-restore FILE=...` stops the api, replaces the main file, removes the stale `-wal`/`-shm` files that belong to the old database, and restarts.
+- Restore ownership matches the api image (`chown 1000`) so the non-root `oracle` user keeps writing after a restore. Backups inherit the plaintext LLM API keys from the Step 11 note, so the README warns to treat `backups/` as a secret store. Scope stays single-host: replication and off-site sync are a different problem.
+
 ## 2026-08-06: Auto-promote on default provider delete (Step 12 follow-up)
 
 - Deleting the global default profile left the instance without a default, silently falling back to the env-configured server default (the mock in dev). The delete handler now promotes the remaining profile with the lowest id via a single `PromoteNextLLMProvider` UPDATE (subquery picks the lowest-id non-default row). Deleting a non-default leaves the flag alone; deleting the last profile still leaves no default, which is the honest state (fall back to the server default) rather than inventing one.

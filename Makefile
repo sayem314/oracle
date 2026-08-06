@@ -1,4 +1,4 @@
-.PHONY: help dev run-api run-web build test lint fmt sqlc migration docker-build docker-up docker-down docker-logs
+.PHONY: help dev run-api run-web build test lint fmt sqlc migration docker-build docker-up docker-down docker-logs backup backup-restore
 
 help: ## Show available commands
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
@@ -46,3 +46,9 @@ docker-down: ## Stop the Docker Compose stack
 
 docker-logs: ## Tail logs from the Docker Compose stack
 	docker compose logs -f
+
+backup: ## Snapshot the SQLite volume into backups/ (KEEP=n keeps n snapshots)
+	./scripts/backup.sh backup
+
+backup-restore: ## Restore a snapshot: make backup-restore FILE=backups/oracle-20260806-120000.db
+	./scripts/backup.sh restore "$(FILE)"

@@ -37,6 +37,7 @@ vite.config.ts.timestamp-*
 *.db
 *.db-wal
 *.db-shm
+backups/
 
 # Env
 .env
