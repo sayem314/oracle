@@ -257,6 +257,21 @@ func newDeleteLLMProviderHandler(deps Deps) fiber.Handler {
 	}
 }
 
+func newFetchLLMProviderModelsHandler(deps Deps) fiber.Handler {
+	return func(c fiber.Ctx) error {
+		provider, err := resolveProvider(deps, c)
+		if err != nil {
+			return err
+		}
+
+		models, err := llm.ListModels(c.Context(), provider.BaseUrl, provider.ApiKey)
+		if err != nil {
+			return fiber.NewError(fiber.StatusBadGateway, "failed to fetch models from gateway: "+err.Error())
+		}
+		return c.JSON(fiber.Map{"models": models})
+	}
+}
+
 func insertModels(deps Deps, ctx context.Context, providerID int64, models []string, defaultModel string) error {
 	for _, m := range models {
 		if err := deps.Store.InsertLLMModel(ctx, db.InsertLLMModelParams{

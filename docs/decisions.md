@@ -2,6 +2,12 @@
 
 Lightweight ADRs. Latest first.
 
+## 2026-08-06: Gateway model listing (Step 12 follow-up)
+
+- Model lists were admin-typed comma strings, so a typo'd model only surfaced as a run-time gateway error. `POST /api/v1/llm/providers/:id/models` (admin-only) fetches the gateway's real model ids via the openai-go SDK's `Models.List` against the profile's base URL and stored key, and returns them. `llm.ListModels` is a free function, deliberately not part of the `Provider` interface: it is an admin tool, not a chat-path operation, and the chat path stays untouched.
+- The fetch is read-only by design: the admin previews the gateway's models and saves through the existing PATCH (which already rejects a `default_model` that is not in the list). Gateway failures (bad key, unreachable) surface as 502 with the SDK's message, same error style as everywhere else.
+- The settings edit form gained a "Fetch from gateway" button that fills the models field and drops a stale default model. OpenRouter-grade gateways return large lists (fine-tunes included), so the comma field gets long; a dedicated model preview UI is a possible follow-up.
+
 ## 2026-08-06: Per-job provider pin (Step 12 follow-up)
 
 - Jobs previously ran with the owner's resolved default (preference > global default > env). A scheduled brief that should always use a specific gateway/model had no way to say so. `jobs` gains `provider_id` (FK -> llm_providers, ON DELETE SET NULL) and `model`; the scheduler passes them into `Engine.Run`, so the pin slots into the existing precedence: explicit job pin > owner preference > global default > env.

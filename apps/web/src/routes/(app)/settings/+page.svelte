@@ -5,6 +5,7 @@
     createLLMProvider,
     updateLLMProvider,
     deleteLLMProvider,
+    fetchProviderModels,
     type LLMProvider,
   } from "$lib/api";
 
@@ -34,10 +35,30 @@
   let canSave = $derived(
     name.trim() !== "" && baseUrl.trim() !== "" && (editingId === null || apiKey !== "" || hasApiKey),
   );
+  let fetching = $state(false);
 
   onMount(() => {
     if (isAdmin) void refresh();
   });
+
+  async function fetchModels() {
+    if (fetching || editingId === null) return;
+    fetching = true;
+    error = "";
+    try {
+      const fetched = await fetchProviderModels(editingId);
+      modelsText = fetched.join(", ");
+      if (defaultModel && !fetched.includes(defaultModel)) {
+        defaultModel = "";
+      }
+      notice =
+        fetched.length > 0 ? `Fetched ${fetched.length} models from the gateway.` : "The gateway returned no models.";
+    } catch (err) {
+      error = err instanceof Error ? err.message : "failed to fetch models";
+    } finally {
+      fetching = false;
+    }
+  }
 
   async function refresh() {
     error = "";
@@ -188,6 +209,11 @@
               Models (comma-separated)
               <input type="text" bind:value={modelsText} placeholder="gpt-4o, gpt-4o-mini" />
             </label>
+            {#if editingId !== null}
+              <button type="button" class="ghost fetch" disabled={fetching} onclick={() => void fetchModels()}>
+                {fetching ? "Fetching..." : "Fetch from gateway"}
+              </button>
+            {/if}
           </div>
           {#if models.length > 0}
             <div class="field">
@@ -316,6 +342,15 @@
   .field input:focus,
   .field select:focus {
     border-color: var(--accent);
+  }
+
+  .field .fetch {
+    margin-top: 6px;
+  }
+
+  .field .fetch:disabled {
+    opacity: 0.6;
+    cursor: default;
   }
 
   .actions {

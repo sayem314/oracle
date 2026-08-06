@@ -333,6 +333,77 @@ func TestChatUsesSelectedProvider(t *testing.T) {
 	})
 }
 
+// TestProviderFetchModels verifies the admin-only model fetch hits the
+// gateway with the stored key and surfaces gateway failures as 502s.
+func TestProviderFetchModels(t *testing.T) {
+	var gotAuth string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		if r.URL.Path != "/v1/models" {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"object":"list","data":[{"id":"model-a"},{"id":"model-b"}]}`))
+	}))
+	defer upstream.Close()
+
+	app, _, dbConn := newTestApp(t, llm.NewMock())
+	ownerCookie, _ := signUp(t, app, dbConn, "owner@example.com")
+
+	res := doUsersRequest(t, app, http.MethodPost, "/api/v1/users", ownerCookie, map[string]any{
+		"email":    "member@example.com",
+		"password": "Secure1pass",
+	})
+	require.Equal(t, http.StatusCreated, res.StatusCode)
+	memberCookie := signIn(t, app, "member@example.com", "Secure1pass")
+
+	payload := validProviderPayload("router")
+	payload["base_url"] = upstream.URL + "/v1"
+	res = doProviderRequest(t, app, http.MethodPost, "/api/v1/llm/providers", ownerCookie, payload)
+	require.Equal(t, http.StatusCreated, res.StatusCode)
+	provider := decodeProvider(t, res)
+
+	fetchPath := "/api/v1/llm/providers/" + itoa(provider.ID) + "/models"
+
+	t.Run("admin fetch", func(t *testing.T) {
+		res := doProviderRequest(t, app, http.MethodPost, fetchPath, ownerCookie, nil)
+		require.Equal(t, http.StatusOK, res.StatusCode)
+		var body struct {
+			Models []string `json:"models"`
+		}
+		require.NoError(t, json.NewDecoder(res.Body).Decode(&body))
+		assert.Equal(t, []string{"model-a", "model-b"}, body.Models)
+		assert.Equal(t, "Bearer sk-router", gotAuth)
+	})
+
+	t.Run("member forbidden", func(t *testing.T) {
+		res := doProviderRequest(t, app, http.MethodPost, fetchPath, memberCookie, nil)
+		require.Equal(t, http.StatusForbidden, res.StatusCode)
+	})
+
+	t.Run("unknown provider", func(t *testing.T) {
+		res := doProviderRequest(t, app, http.MethodPost, "/api/v1/llm/providers/999/models", ownerCookie, nil)
+		require.Equal(t, http.StatusNotFound, res.StatusCode)
+	})
+
+	t.Run("gateway failure surfaces as 502", func(t *testing.T) {
+		badUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "invalid api key", http.StatusUnauthorized)
+		}))
+		defer badUpstream.Close()
+
+		badPayload := validProviderPayload("bad")
+		badPayload["base_url"] = badUpstream.URL + "/v1"
+		res := doProviderRequest(t, app, http.MethodPost, "/api/v1/llm/providers", ownerCookie, badPayload)
+		require.Equal(t, http.StatusCreated, res.StatusCode)
+		bad := decodeProvider(t, res)
+
+		res = doProviderRequest(t, app, http.MethodPost, "/api/v1/llm/providers/"+itoa(bad.ID)+"/models", ownerCookie, nil)
+		require.Equal(t, http.StatusBadGateway, res.StatusCode)
+	})
+}
+
 type prefsBody struct {
 	ProviderID int64  `json:"provider_id"`
 	Model      string `json:"model"`

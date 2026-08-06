@@ -302,3 +302,46 @@ func TestOpenAIToolHistoryRoundTrip(t *testing.T) {
 	assert.Equal(t, "call_1", toolMsg["tool_call_id"])
 	assert.Equal(t, "2026-08-04T00:00:00Z", toolMsg["content"])
 }
+
+func TestListModels(t *testing.T) {
+	var gotAuth string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		if !strings.HasSuffix(r.URL.Path, "/models") {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"object":"list","data":[{"id":"model-a"},{"id":"model-b"}]}`))
+	}))
+	defer upstream.Close()
+
+	// The SDK appends /models to the gateway base URL (/v1 is the norm).
+	models, err := llm.ListModels(t.Context(), upstream.URL+"/v1", "sk-test")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"model-a", "model-b"}, models)
+	assert.Equal(t, "Bearer sk-test", gotAuth)
+}
+
+func TestListModelsErrors(t *testing.T) {
+	t.Run("non-200", func(t *testing.T) {
+		upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "no key", http.StatusUnauthorized)
+		}))
+		defer upstream.Close()
+
+		_, err := llm.ListModels(t.Context(), upstream.URL, "sk-bad")
+		require.Error(t, err)
+	})
+
+	t.Run("malformed body", func(t *testing.T) {
+		upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"data":[`))
+		}))
+		defer upstream.Close()
+
+		_, err := llm.ListModels(t.Context(), upstream.URL, "sk-test")
+		require.Error(t, err)
+	})
+}

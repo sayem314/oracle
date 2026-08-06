@@ -44,6 +44,7 @@ func New(deps Deps) *fiber.App {
 	providersAdmin.Post("", newCreateLLMProviderHandler(deps))
 	providersAdmin.Patch("/:id", newUpdateLLMProviderHandler(deps))
 	providersAdmin.Delete("/:id", newDeleteLLMProviderHandler(deps))
+	providersAdmin.Post("/:id/models", newFetchLLMProviderModelsHandler(deps))
 	api.Get("/llm/prefs", newGetLLMPrefsHandler(deps))
 	api.Put("/llm/prefs", newPutLLMPrefsHandler(deps))
 

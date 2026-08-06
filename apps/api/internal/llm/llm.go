@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+
+	"github.com/openai/openai-go/v3"
+	"github.com/openai/openai-go/v3/option"
 )
 
 const (
@@ -87,4 +90,25 @@ func New(opts Options) (Provider, error) {
 	default:
 		return nil, fmt.Errorf("llm: unknown provider %q", opts.Provider)
 	}
+}
+
+// ListModels queries an OpenAI-compatible gateway for its available model ids.
+// It is not part of the Provider interface: it is an admin-only admin tool, not
+// a chat-path operation.
+func ListModels(ctx context.Context, baseURL, apiKey string) ([]string, error) {
+	reqOpts := []option.RequestOption{option.WithAPIKey(apiKey)}
+	if baseURL != "" {
+		reqOpts = append(reqOpts, option.WithBaseURL(baseURL))
+	}
+	client := openai.NewClient(reqOpts...)
+
+	page, err := client.Models.List(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("llm: list models: %w", err)
+	}
+	names := make([]string, 0, len(page.Data))
+	for _, m := range page.Data {
+		names = append(names, m.ID)
+	}
+	return names, nil
 }

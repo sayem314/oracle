@@ -353,6 +353,19 @@ export async function deleteLLMProvider(id: number): Promise<void> {
   await deleteRequest(`/api/v1/llm/providers/${id}`);
 }
 
+// Asks the gateway for its available models (admin-only).
+export async function fetchProviderModels(id: number): Promise<string[]> {
+  const res = await fetch(`/api/v1/llm/providers/${id}/models`, {
+    method: "POST",
+    credentials: "include",
+  });
+  if (!res.ok) {
+    throw new Error(await parseError(res));
+  }
+  const body = (await res.json()) as { models: string[] };
+  return body.models;
+}
+
 export interface LLMPrefs {
   provider_id: number | null;
   model: string;
