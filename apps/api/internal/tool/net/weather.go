@@ -1,4 +1,4 @@
-package tool
+package net
 
 import (
 	"context"
@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/sayem314/oracle/apps/api/internal/llm"
+	"github.com/sayem314/oracle/apps/api/internal/tool"
 )
 
 // weatherEndpoint is the keyless Open-Meteo forecast API.
@@ -22,9 +23,9 @@ const (
 	maxForecastDays = 7
 )
 
-func weatherTool(client *http.Client) Tool {
+func weatherTool(client *http.Client) tool.Tool {
 	schema := json.RawMessage(`{"type":"object","properties":{"latitude":{"type":"number"},"longitude":{"type":"number"},"units":{"type":"string","enum":["celsius","fahrenheit"]},"days":{"type":"integer"}},"required":["latitude","longitude"],"additionalProperties":false}`)
-	return Tool{
+	return tool.Tool{
 		Definition: llm.Tool{
 			Name: "weather",
 			Description: "Return the current weather and a daily forecast for a location. " +
@@ -38,7 +39,7 @@ func weatherTool(client *http.Client) Tool {
 	}
 }
 
-func weatherExecute(client *http.Client, endpoint string) ExecuteFunc {
+func weatherExecute(client *http.Client, endpoint string) tool.ExecuteFunc {
 	return func(ctx context.Context, args json.RawMessage) (string, error) {
 		var in struct {
 			Latitude  float64 `json:"latitude"`

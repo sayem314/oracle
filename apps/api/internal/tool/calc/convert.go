@@ -1,4 +1,4 @@
-package tool
+package calc
 
 import (
 	"context"
@@ -10,11 +10,12 @@ import (
 	"strings"
 
 	"github.com/sayem314/oracle/apps/api/internal/llm"
+	"github.com/sayem314/oracle/apps/api/internal/tool"
 )
 
-func convertTool() Tool {
+func convertTool() tool.Tool {
 	schema := json.RawMessage(`{"type":"object","properties":{"value":{"type":"number"},"from":{"type":"string"},"to":{"type":"string"}},"required":["value","from","to"],"additionalProperties":false}`)
-	return Tool{
+	return tool.Tool{
 		Definition: llm.Tool{
 			Name: "convert",
 			Description: "Convert a value between compatible units. Supports length, mass, " +

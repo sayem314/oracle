@@ -1,4 +1,4 @@
-package tool_test
+package datetime_test
 
 import (
 	"context"
@@ -10,13 +10,14 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/sayem314/oracle/apps/api/internal/tool"
+	"github.com/sayem314/oracle/apps/api/internal/tool/datetime"
 )
 
-// reg builds a Registry with the built-in tools, mirroring the chat loop's
-// wiring, so tests drive tools through the public Executor surface.
+// reg builds a Registry with the datetime group's tools, mirroring the chat
+// loop's wiring, so tests drive tools through the public Executor surface.
 func reg(t *testing.T) tool.Executor {
 	r := tool.NewRegistry()
-	for _, tl := range tool.NewBuiltin() {
+	for _, tl := range datetime.New() {
 		require.NoError(t, r.Register(tl))
 	}
 	return r

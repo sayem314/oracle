@@ -21,6 +21,7 @@ import (
 	"github.com/sayem314/oracle/apps/api/internal/server"
 	"github.com/sayem314/oracle/apps/api/internal/store"
 	"github.com/sayem314/oracle/apps/api/internal/tool"
+	"github.com/sayem314/oracle/apps/api/internal/tool/all"
 )
 
 func main() {
@@ -69,10 +70,8 @@ func main() {
 	log.Info().Str("provider", cfg.LLMProvider).Msg("llm provider ready")
 
 	tools := tool.NewRegistry()
-	for _, t := range tool.NewBuiltin() {
-		if err := tools.Register(t); err != nil {
-			log.Fatal().Err(err).Msg("register tool")
-		}
+	if err := tools.RegisterGroups(all.Groups()...); err != nil {
+		log.Fatal().Err(err).Msg("register tools")
 	}
 
 	st := store.New(sqlDB)

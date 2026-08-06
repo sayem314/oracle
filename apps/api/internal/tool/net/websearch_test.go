@@ -1,4 +1,4 @@
-package tool
+package net
 
 import (
 	"context"
@@ -54,12 +54,12 @@ func searchHTTPServer(page string) (*httptest.Server, *atomic.Bool) {
 
 func TestWebSearchRegistered(t *testing.T) {
 	found := false
-	for _, tl := range NewBuiltin() {
+	for _, tl := range New() {
 		if tl.Definition.Name == "web_search" {
 			found = true
 		}
 	}
-	assert.True(t, found, "web_search should be part of NewBuiltin")
+	assert.True(t, found, "web_search should be part of the net group")
 }
 
 func TestWebSearchHits(t *testing.T) {
@@ -80,7 +80,9 @@ func TestWebSearchHits(t *testing.T) {
 func TestWebSearchCapsResults(t *testing.T) {
 	var results strings.Builder
 	for i := range 8 {
-		results.WriteString(`<div class="result"><h2 class="result__title"><a rel="nofollow" class="result__a" href="//ddg/l/?uddg=aHR0cHM6Ly9leGFtcGxlLmNvbS8=">Result ` + string(rune('A'+i)) + `</a></h2><a class="result__snippet">snippet</a></div>`)
+		results.WriteString(`<div class="result"><h2 class="result__title"><a rel="nofollow" class="result__a" href="//ddg/l/?uddg=aHR0cHM6Ly9leGFtcGxlLmNvbS8=">Result `)
+		results.WriteString(string(rune('A' + i)))
+		results.WriteString(`</a></h2><a class="result__snippet">snippet</a></div>`)
 	}
 	srv, _ := searchHTTPServer(results.String())
 	defer srv.Close()

@@ -1,4 +1,4 @@
-package tool
+package calc
 
 import (
 	"context"
@@ -10,14 +10,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func mustArgs(s string) json.RawMessage { return json.RawMessage(s) }
+
 func TestMathEvalRegistered(t *testing.T) {
 	found := false
-	for _, tl := range NewBuiltin() {
+	for _, tl := range New() {
 		if tl.Definition.Name == "math_eval" {
 			found = true
 		}
 	}
-	assert.True(t, found, "math_eval should be part of NewBuiltin")
+	assert.True(t, found, "math_eval should be part of the calc group")
 }
 
 func TestMathEvalExpressions(t *testing.T) {

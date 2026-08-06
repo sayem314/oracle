@@ -1,4 +1,4 @@
-package tool
+package net
 
 import (
 	"context"
@@ -14,12 +14,12 @@ import (
 
 func TestHTTPRequestRegistered(t *testing.T) {
 	found := false
-	for _, tl := range NewBuiltin() {
+	for _, tl := range New() {
 		if tl.Definition.Name == "http_request" {
 			found = true
 		}
 	}
-	assert.True(t, found, "http_request should be part of NewBuiltin")
+	assert.True(t, found, "http_request should be part of the net group")
 }
 
 func TestHTTPRequestGet(t *testing.T) {

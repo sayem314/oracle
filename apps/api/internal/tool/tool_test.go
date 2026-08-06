@@ -10,6 +10,7 @@ import (
 
 	"github.com/sayem314/oracle/apps/api/internal/llm"
 	"github.com/sayem314/oracle/apps/api/internal/tool"
+	"github.com/sayem314/oracle/apps/api/internal/tool/all"
 )
 
 func echoTool() tool.Tool {
@@ -69,8 +70,6 @@ func TestRegistryRegisterEmptyName(t *testing.T) {
 
 func TestBuiltinToolsRegisterCleanly(t *testing.T) {
 	r := tool.NewRegistry()
-	for _, tl := range tool.NewBuiltin() {
-		require.NoError(t, r.Register(tl))
-	}
+	require.NoError(t, r.RegisterGroups(all.Groups()...))
 	assert.NotEmpty(t, r.Definitions())
 }

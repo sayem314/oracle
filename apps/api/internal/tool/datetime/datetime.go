@@ -1,4 +1,4 @@
-package tool
+package datetime
 
 import (
 	"context"
@@ -8,11 +8,20 @@ import (
 	_ "time/tzdata"
 
 	"github.com/sayem314/oracle/apps/api/internal/llm"
+	"github.com/sayem314/oracle/apps/api/internal/tool"
 )
 
-func getTimeTool() Tool {
+func New() []tool.Tool {
+	return []tool.Tool{
+		getTimeTool(),
+		dateCalcTool(),
+		timezoneConvertTool(),
+	}
+}
+
+func getTimeTool() tool.Tool {
 	schema := json.RawMessage(`{"type":"object","properties":{"timezone":{"type":"string"}},"additionalProperties":false}`)
-	return Tool{
+	return tool.Tool{
 		Definition: llm.Tool{
 			Name: "get_time",
 			Description: "Return the current date and time. Returns datetime (RFC 3339), " +
@@ -35,9 +44,9 @@ func getTimeTool() Tool {
 	}
 }
 
-func dateCalcTool() Tool {
+func dateCalcTool() tool.Tool {
 	schema := json.RawMessage(`{"type":"object","properties":{"base":{"type":"string"},"timezone":{"type":"string"},"weeks":{"type":"integer"},"months":{"type":"integer"}},"additionalProperties":false}`)
-	return Tool{
+	return tool.Tool{
 		Definition: llm.Tool{
 			Name: "date_calc",
 			Description: "Shift a date by weeks and/or months and return the resulting date and time. " +
@@ -70,9 +79,9 @@ func dateCalcTool() Tool {
 	}
 }
 
-func timezoneConvertTool() Tool {
+func timezoneConvertTool() tool.Tool {
 	schema := json.RawMessage(`{"type":"object","properties":{"datetime":{"type":"string"},"from":{"type":"string"},"to":{"type":"string"}},"required":["datetime","from","to"],"additionalProperties":false}`)
-	return Tool{
+	return tool.Tool{
 		Definition: llm.Tool{
 			Name: "timezone_convert",
 			Description: "Render an instant in another timezone. datetime is an RFC 3339 timestamp; " +

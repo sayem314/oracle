@@ -20,6 +20,7 @@ import (
 	"github.com/sayem314/oracle/apps/api/internal/server"
 	"github.com/sayem314/oracle/apps/api/internal/store"
 	"github.com/sayem314/oracle/apps/api/internal/tool"
+	"github.com/sayem314/oracle/apps/api/internal/tool/all"
 )
 
 const testAuthSecret = "0123456789abcdef0123456789abcdef"
@@ -34,9 +35,7 @@ func newTestApp(t *testing.T, provider llm.Provider) (*fiber.App, store.Store, *
 func builtinTools(t *testing.T) *tool.Registry {
 	t.Helper()
 	r := tool.NewRegistry()
-	for _, tl := range tool.NewBuiltin() {
-		require.NoError(t, r.Register(tl))
-	}
+	require.NoError(t, r.RegisterGroups(all.Groups()...))
 	return r
 }
 

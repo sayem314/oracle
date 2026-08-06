@@ -1,7 +1,8 @@
-package tool
+package fs
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,13 +12,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func mustArgs(s string) json.RawMessage { return json.RawMessage(s) }
+
 func TestFileToolsRegistered(t *testing.T) {
 	names := map[string]bool{}
-	for _, tl := range NewBuiltin() {
+	for _, tl := range New() {
 		names[tl.Definition.Name] = true
 	}
 	for _, want := range []string{"file_read", "file_write", "file_list", "file_delete"} {
-		assert.True(t, names[want], "%s should be part of NewBuiltin", want)
+		assert.True(t, names[want], "%s should be part of the fs group", want)
 	}
 }
 

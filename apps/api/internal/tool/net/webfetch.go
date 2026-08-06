@@ -1,4 +1,4 @@
-package tool
+package net
 
 import (
 	"bytes"
@@ -16,6 +16,7 @@ import (
 	"github.com/PuerkitoBio/goquery"
 
 	"github.com/sayem314/oracle/apps/api/internal/llm"
+	"github.com/sayem314/oracle/apps/api/internal/tool"
 )
 
 const (
@@ -36,9 +37,9 @@ func httpClient() *http.Client {
 	}
 }
 
-func webFetchTool(client *http.Client) Tool {
+func webFetchTool(client *http.Client) tool.Tool {
 	schema := json.RawMessage(`{"type":"object","properties":{"url":{"type":"string"}},"required":["url"],"additionalProperties":false}`)
-	return Tool{
+	return tool.Tool{
 		Definition: llm.Tool{
 			Name: "web_fetch",
 			Description: "Fetch a URL over HTTP or HTTPS and return its content as text. " +
@@ -49,7 +50,7 @@ func webFetchTool(client *http.Client) Tool {
 	}
 }
 
-func webFetchExecute(client *http.Client) ExecuteFunc {
+func webFetchExecute(client *http.Client) tool.ExecuteFunc {
 	return func(ctx context.Context, args json.RawMessage) (string, error) {
 		var in struct {
 			URL string `json:"url"`

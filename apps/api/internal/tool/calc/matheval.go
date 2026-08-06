@@ -1,4 +1,4 @@
-package tool
+package calc
 
 import (
 	"context"
@@ -10,11 +10,19 @@ import (
 	"strings"
 
 	"github.com/sayem314/oracle/apps/api/internal/llm"
+	"github.com/sayem314/oracle/apps/api/internal/tool"
 )
 
-func mathEvalTool() Tool {
+func New() []tool.Tool {
+	return []tool.Tool{
+		convertTool(),
+		mathEvalTool(),
+	}
+}
+
+func mathEvalTool() tool.Tool {
 	schema := json.RawMessage(`{"type":"object","properties":{"expression":{"type":"string"}},"required":["expression"],"additionalProperties":false}`)
-	return Tool{
+	return tool.Tool{
 		Definition: llm.Tool{
 			Name: "math_eval",
 			Description: "Evaluate a math expression and return the numeric result. " +

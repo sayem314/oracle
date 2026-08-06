@@ -1,4 +1,4 @@
-package tool
+package calc
 
 import (
 	"context"
@@ -10,12 +10,12 @@ import (
 
 func TestConvertRegistered(t *testing.T) {
 	found := false
-	for _, tl := range NewBuiltin() {
+	for _, tl := range New() {
 		if tl.Definition.Name == "convert" {
 			found = true
 		}
 	}
-	assert.True(t, found, "convert should be part of NewBuiltin")
+	assert.True(t, found, "convert should be part of the calc group")
 }
 
 func TestConvertLength(t *testing.T) {

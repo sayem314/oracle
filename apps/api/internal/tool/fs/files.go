@@ -1,4 +1,4 @@
-package tool
+package fs
 
 import (
 	"context"
@@ -11,13 +11,23 @@ import (
 	"strings"
 
 	"github.com/sayem314/oracle/apps/api/internal/llm"
+	"github.com/sayem314/oracle/apps/api/internal/tool"
 )
+
+func New() []tool.Tool {
+	return []tool.Tool{
+		fileReadTool(),
+		fileWriteTool(),
+		fileListTool(),
+		fileDeleteTool(),
+	}
+}
 
 const maxReadBytes = 512 << 10
 
-func fileReadTool() Tool {
+func fileReadTool() tool.Tool {
 	schema := json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"}},"required":["path"],"additionalProperties":false}`)
-	return Tool{
+	return tool.Tool{
 		Definition: llm.Tool{
 			Name: "file_read",
 			Description: "Read a local text file and return its contents. path is an absolute or " +
@@ -53,9 +63,9 @@ func fileReadTool() Tool {
 	}
 }
 
-func fileWriteTool() Tool {
+func fileWriteTool() tool.Tool {
 	schema := json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"],"additionalProperties":false}`)
-	return Tool{
+	return tool.Tool{
 		Definition: llm.Tool{
 			Name: "file_write",
 			Description: "Write content to a local file, creating it if it does not exist and " +
@@ -85,9 +95,9 @@ func fileWriteTool() Tool {
 	}
 }
 
-func fileListTool() Tool {
+func fileListTool() tool.Tool {
 	schema := json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"}},"required":["path"],"additionalProperties":false}`)
-	return Tool{
+	return tool.Tool{
 		Definition: llm.Tool{
 			Name: "file_list",
 			Description: "List the entries in a directory. path is an absolute or relative " +
@@ -122,9 +132,9 @@ func fileListTool() Tool {
 	}
 }
 
-func fileDeleteTool() Tool {
+func fileDeleteTool() tool.Tool {
 	schema := json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"}},"required":["path"],"additionalProperties":false}`)
-	return Tool{
+	return tool.Tool{
 		Definition: llm.Tool{
 			Name: "file_delete",
 			Description: "Delete a local file or empty directory. path is an absolute or relative " +

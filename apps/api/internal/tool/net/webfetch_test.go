@@ -1,4 +1,4 @@
-package tool
+package net
 
 import (
 	"context"
@@ -18,12 +18,12 @@ func plainClient() *http.Client { return http.DefaultClient }
 
 func TestWebFetchRegistered(t *testing.T) {
 	found := false
-	for _, tl := range NewBuiltin() {
+	for _, tl := range New() {
 		if tl.Definition.Name == "web_fetch" {
 			found = true
 		}
 	}
-	assert.True(t, found, "web_fetch should be part of NewBuiltin")
+	assert.True(t, found, "web_fetch should be part of the net group")
 }
 
 func TestWebFetchHTML(t *testing.T) {

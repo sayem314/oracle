@@ -51,6 +51,19 @@ func (r *Registry) Register(t Tool) error {
 	return nil
 }
 
+// RegisterGroups wires the tools built by each group factory in order,
+// returning the first registration error, if any.
+func (r *Registry) RegisterGroups(factories ...func() []Tool) error {
+	for _, f := range factories {
+		for _, t := range f() {
+			if err := r.Register(t); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 func (r *Registry) Definitions() []llm.Tool {
 	defs := make([]llm.Tool, 0, len(r.order))
 	for _, name := range r.order {

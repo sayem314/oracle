@@ -1,4 +1,4 @@
-package tool
+package net
 
 import (
 	"context"
@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/sayem314/oracle/apps/api/internal/llm"
+	"github.com/sayem314/oracle/apps/api/internal/tool"
 )
 
 var allowedMethods = map[string]bool{
@@ -21,9 +22,9 @@ var allowedMethods = map[string]bool{
 	http.MethodDelete: true,
 }
 
-func httpRequestTool(client *http.Client) Tool {
+func httpRequestTool(client *http.Client) tool.Tool {
 	schema := json.RawMessage(`{"type":"object","properties":{"method":{"type":"string","enum":["GET","POST","PUT","PATCH","DELETE"]},"url":{"type":"string"},"headers":{"type":"object","additionalProperties":{"type":"string"}},"body":{"type":"string"}},"required":["method","url"],"additionalProperties":false}`)
-	return Tool{
+	return tool.Tool{
 		Definition: llm.Tool{
 			Name: "http_request",
 			Description: "Issue an HTTP request and return the status and response body. " +
@@ -37,7 +38,7 @@ func httpRequestTool(client *http.Client) Tool {
 	}
 }
 
-func httpRequestExecute(client *http.Client) ExecuteFunc {
+func httpRequestExecute(client *http.Client) tool.ExecuteFunc {
 	return func(ctx context.Context, args json.RawMessage) (string, error) {
 		var in struct {
 			Method  string            `json:"method"`

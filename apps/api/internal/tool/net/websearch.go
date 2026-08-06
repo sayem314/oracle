@@ -1,4 +1,4 @@
-package tool
+package net
 
 import (
 	"context"
@@ -14,6 +14,7 @@ import (
 	"golang.org/x/net/html"
 
 	"github.com/sayem314/oracle/apps/api/internal/llm"
+	"github.com/sayem314/oracle/apps/api/internal/tool"
 )
 
 const (
@@ -33,13 +34,13 @@ type searchHit struct {
 	snippet string
 }
 
-func webSearchTool(client *http.Client) Tool {
+func webSearchTool(client *http.Client) tool.Tool {
 	return webSearchAt(client, defaultSearchEndpoint)
 }
 
-func webSearchAt(client *http.Client, endpoint string) Tool {
+func webSearchAt(client *http.Client, endpoint string) tool.Tool {
 	schema := json.RawMessage(`{"type":"object","properties":{"query":{"type":"string"}},"required":["query"],"additionalProperties":false}`)
-	return Tool{
+	return tool.Tool{
 		Definition: llm.Tool{
 			Name:        "web_search",
 			Description: "Search the web (DuckDuckGo) for a query and return the top result titles, URLs, and snippets.",
@@ -49,7 +50,7 @@ func webSearchAt(client *http.Client, endpoint string) Tool {
 	}
 }
 
-func webSearchExecute(client *http.Client, endpoint string) ExecuteFunc {
+func webSearchExecute(client *http.Client, endpoint string) tool.ExecuteFunc {
 	return func(ctx context.Context, args json.RawMessage) (string, error) {
 		var in struct {
 			Query string `json:"query"`

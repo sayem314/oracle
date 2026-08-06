@@ -1,4 +1,4 @@
-package tool
+package net
 
 import (
 	"context"
@@ -13,12 +13,12 @@ import (
 
 func TestWeatherRegistered(t *testing.T) {
 	found := false
-	for _, tl := range NewBuiltin() {
+	for _, tl := range New() {
 		if tl.Definition.Name == "weather" {
 			found = true
 		}
 	}
-	assert.True(t, found, "weather should be part of NewBuiltin")
+	assert.True(t, found, "weather should be part of the net group")
 }
 
 func TestWeatherRejectsInvalidCoordinates(t *testing.T) {
