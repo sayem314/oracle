@@ -12,5 +12,9 @@ func NewBuiltin() []Tool {
 		weatherTool(httpClient()),
 		convertTool(),
 		mathEvalTool(),
+		fileReadTool(),
+		fileWriteTool(),
+		fileListTool(),
+		fileDeleteTool(),
 	}
 }
