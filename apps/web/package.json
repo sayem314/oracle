@@ -23,5 +23,8 @@
     "svelte-check": "4.7.4",
     "typescript": "6.0.3",
     "vite": "8.1.5"
+  },
+  "dependencies": {
+    "eventsource-parser": "3.1.0"
   }
 }

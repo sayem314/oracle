@@ -1,4 +1,4 @@
-import { parseSSE } from "./sse";
+import { createParser } from "eventsource-parser";
 
 export interface User {
   email: string;
@@ -181,56 +181,75 @@ export async function decideApproval(
 async function consumeChatStream(res: Response, cb: ChatStreamCallbacks): Promise<void> {
   if (!res.body) return;
 
-  for await (const { event, data } of parseSSE(res.body)) {
-    let payload: Record<string, unknown> = {};
-    try {
-      payload = JSON.parse(data) as Record<string, unknown>;
-    } catch {
-      // Ignore malformed payloads rather than killing the stream.
-    }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
 
-    switch (event) {
-      case "start":
-        cb.onStart?.(Number(payload.session_id), Number(payload.user_message_id));
-        break;
-      case "delta":
-        cb.onDelta?.(typeof payload.content === "string" ? payload.content : "");
-        break;
-      case "done":
-        cb.onDone?.(Number(payload.message_id), typeof payload.finish_reason === "string" ? payload.finish_reason : "");
-        break;
-      case "error":
-        cb.onError?.(typeof payload.message === "string" ? payload.message : "stream error");
-        break;
-      case "tool_calls": {
-        const calls = Array.isArray(payload.calls) ? (payload.calls as ToolCallInfo[]) : [];
-        cb.onToolCalls?.(calls);
-        break;
+  const parser = createParser({
+    onEvent: (event) => {
+      let payload: Record<string, unknown> = {};
+      try {
+        payload = JSON.parse(event.data) as Record<string, unknown>;
+      } catch {
+        // Ignore malformed payloads rather than killing the stream.
       }
-      case "tool_result":
-        cb.onToolResult?.(
-          typeof payload.tool_call_id === "string" ? payload.tool_call_id : "",
-          typeof payload.name === "string" ? payload.name : "",
-          typeof payload.result === "string" ? payload.result : "",
-        );
-        break;
-      case "approval_required":
-        cb.onApprovalRequired?.({
-          id: Number(payload.id),
-          toolCallId: typeof payload.tool_call_id === "string" ? payload.tool_call_id : "",
-          messageId: Number(payload.message_id),
-          name: typeof payload.name === "string" ? payload.name : "",
-          arguments: typeof payload.arguments === "string" ? payload.arguments : "",
-        });
-        break;
-      case "decision":
-        cb.onDecision?.(
-          Number(payload.id),
-          typeof payload.result === "string" ? payload.result : "",
-          typeof payload.status === "string" ? payload.status : "",
-        );
-        break;
+
+      switch (event.event) {
+        case "start":
+          cb.onStart?.(Number(payload.session_id), Number(payload.user_message_id));
+          break;
+        case "delta":
+          cb.onDelta?.(typeof payload.content === "string" ? payload.content : "");
+          break;
+        case "done":
+          cb.onDone?.(
+            Number(payload.message_id),
+            typeof payload.finish_reason === "string" ? payload.finish_reason : "",
+          );
+          break;
+        case "error":
+          cb.onError?.(typeof payload.message === "string" ? payload.message : "stream error");
+          break;
+        case "tool_calls": {
+          const calls = Array.isArray(payload.calls) ? (payload.calls as ToolCallInfo[]) : [];
+          cb.onToolCalls?.(calls);
+          break;
+        }
+        case "tool_result":
+          cb.onToolResult?.(
+            typeof payload.tool_call_id === "string" ? payload.tool_call_id : "",
+            typeof payload.name === "string" ? payload.name : "",
+            typeof payload.result === "string" ? payload.result : "",
+          );
+          break;
+        case "approval_required":
+          cb.onApprovalRequired?.({
+            id: Number(payload.id),
+            toolCallId: typeof payload.tool_call_id === "string" ? payload.tool_call_id : "",
+            messageId: Number(payload.message_id),
+            name: typeof payload.name === "string" ? payload.name : "",
+            arguments: typeof payload.arguments === "string" ? payload.arguments : "",
+          });
+          break;
+        case "decision":
+          cb.onDecision?.(
+            Number(payload.id),
+            typeof payload.result === "string" ? payload.result : "",
+            typeof payload.status === "string" ? payload.status : "",
+          );
+          break;
+      }
+    },
+  });
+
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      parser.feed(decoder.decode(value, { stream: true }));
     }
+    parser.feed(decoder.decode());
+  } finally {
+    reader.releaseLock();
   }
 }
 
