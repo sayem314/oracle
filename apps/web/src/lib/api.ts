@@ -228,11 +228,21 @@ export interface Job {
   schedule: string;
   prompt: string;
   enabled: boolean;
+  provider_id: number | null;
+  model: string;
   last_run_at: string | null;
   last_status: string;
   next_run_at: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface JobInput {
+  schedule: string;
+  prompt: string;
+  session_id?: number;
+  provider_id?: number;
+  model?: string;
 }
 
 export async function listJobs(): Promise<Job[]> {
@@ -243,14 +253,14 @@ export async function listJobs(): Promise<Job[]> {
   return (await res.json()) as Job[];
 }
 
-export async function createJob(input: { schedule: string; prompt: string; session_id?: number }): Promise<Job> {
+export async function createJob(input: JobInput): Promise<Job> {
   const res = await postJSON("/api/v1/jobs", input);
   return (await res.json()) as Job;
 }
 
 export async function updateJob(
   id: number,
-  patch: { schedule?: string; prompt?: string; enabled?: boolean },
+  patch: { schedule?: string; prompt?: string; enabled?: boolean; provider_id?: number; model?: string },
 ): Promise<Job> {
   const res = await patchJSON(`/api/v1/jobs/${id}`, patch);
   return (await res.json()) as Job;

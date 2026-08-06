@@ -19,6 +19,8 @@ type jobResponse struct {
 	Schedule   string     `json:"schedule"`
 	Prompt     string     `json:"prompt"`
 	Enabled    bool       `json:"enabled"`
+	ProviderID int64      `json:"provider_id"`
+	Model      string     `json:"model"`
 	LastRunAt  *time.Time `json:"last_run_at"`
 	LastStatus string     `json:"last_status"`
 	NextRunAt  *time.Time `json:"next_run_at"`
@@ -43,9 +45,13 @@ func jobToResponse(j db.Job) jobResponse {
 		LastStatus: j.LastStatus,
 		CreatedAt:  j.CreatedAt,
 		UpdatedAt:  j.UpdatedAt,
+		Model:      j.Model,
 	}
 	if j.SessionID.Valid {
 		resp.SessionID = &j.SessionID.Int64
+	}
+	if j.ProviderID.Valid {
+		resp.ProviderID = j.ProviderID.Int64
 	}
 	if j.LastRunAt.Valid {
 		resp.LastRunAt = &j.LastRunAt.Time
@@ -72,9 +78,11 @@ func newListJobsHandler(deps Deps) fiber.Handler {
 }
 
 type createJobRequest struct {
-	Schedule  string `json:"schedule"`
-	Prompt    string `json:"prompt"`
-	SessionID *int64 `json:"session_id"`
+	Schedule   string `json:"schedule"`
+	Prompt     string `json:"prompt"`
+	SessionID  *int64 `json:"session_id"`
+	ProviderID int64  `json:"provider_id"`
+	Model      string `json:"model"`
 }
 
 func newCreateJobHandler(deps Deps) fiber.Handler {
@@ -117,13 +125,26 @@ func newCreateJobHandler(deps Deps) fiber.Handler {
 			return err
 		}
 
+		model := strings.TrimSpace(req.Model)
+		var providerID sql.NullInt64
+		if req.ProviderID != 0 {
+			if err := checkProviderModel(deps, c, req.ProviderID, model); err != nil {
+				return err
+			}
+			providerID = sql.NullInt64{Int64: req.ProviderID, Valid: true}
+		} else {
+			model = ""
+		}
+
 		job, err := deps.Store.CreateJob(ctx, db.CreateJobParams{
-			UserID:    userID,
-			SessionID: sessionID,
-			Schedule:  schedule,
-			Prompt:    prompt,
-			Enabled:   1,
-			NextRunAt: sql.NullTime{Time: next, Valid: true},
+			UserID:     userID,
+			SessionID:  sessionID,
+			Schedule:   schedule,
+			Prompt:     prompt,
+			Enabled:    1,
+			NextRunAt:  sql.NullTime{Time: next, Valid: true},
+			ProviderID: providerID,
+			Model:      model,
 		})
 		if err != nil {
 			return err
@@ -134,9 +155,11 @@ func newCreateJobHandler(deps Deps) fiber.Handler {
 }
 
 type updateJobRequest struct {
-	Schedule *string `json:"schedule"`
-	Prompt   *string `json:"prompt"`
-	Enabled  *bool   `json:"enabled"`
+	Schedule   *string `json:"schedule"`
+	Prompt     *string `json:"prompt"`
+	Enabled    *bool   `json:"enabled"`
+	ProviderID *int64  `json:"provider_id"`
+	Model      *string `json:"model"`
 }
 
 func newUpdateJobHandler(deps Deps) fiber.Handler {
@@ -186,6 +209,25 @@ func newUpdateJobHandler(deps Deps) fiber.Handler {
 			enabled = *req.Enabled
 		}
 
+		model := job.Model
+		if req.Model != nil {
+			model = strings.TrimSpace(*req.Model)
+		}
+
+		providerID := job.ProviderID
+		if req.ProviderID != nil {
+			if *req.ProviderID == 0 {
+				providerID = sql.NullInt64{}
+			} else {
+				providerID = sql.NullInt64{Int64: *req.ProviderID, Valid: true}
+			}
+		}
+		if !providerID.Valid {
+			model = ""
+		} else if err := checkProviderModel(deps, c, providerID.Int64, model); err != nil {
+			return err
+		}
+
 		var enabledInt int64
 		var next sql.NullTime
 		if enabled {
@@ -198,11 +240,13 @@ func newUpdateJobHandler(deps Deps) fiber.Handler {
 		}
 
 		updated, err := deps.Store.UpdateJob(ctx, db.UpdateJobParams{
-			Schedule:  schedule,
-			Prompt:    prompt,
-			Enabled:   enabledInt,
-			NextRunAt: next,
-			ID:        job.ID,
+			Schedule:   schedule,
+			Prompt:     prompt,
+			Enabled:    enabledInt,
+			NextRunAt:  next,
+			ProviderID: providerID,
+			Model:      model,
+			ID:         job.ID,
 		})
 		if err != nil {
 			return err

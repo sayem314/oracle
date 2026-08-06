@@ -52,6 +52,8 @@ type Job struct {
 	NextRunAt  sql.NullTime
 	CreatedAt  time.Time
 	UpdatedAt  time.Time
+	ProviderID sql.NullInt64
+	Model      string
 }
 
 type LlmModel struct {

@@ -25,6 +25,8 @@ type jobResponse struct {
 	Schedule   string     `json:"schedule"`
 	Prompt     string     `json:"prompt"`
 	Enabled    bool       `json:"enabled"`
+	ProviderID int64      `json:"provider_id"`
+	Model      string     `json:"model"`
 	LastStatus string     `json:"last_status"`
 	NextRunAt  *time.Time `json:"next_run_at"`
 }
@@ -255,6 +257,94 @@ func TestDeleteJob(t *testing.T) {
 
 	res = doJobsRequest(t, app, http.MethodDelete, "/api/v1/jobs/"+itoa(created.ID), cookie, nil)
 	assert.Equal(t, http.StatusNotFound, res.StatusCode)
+}
+
+func TestJobProviderPin(t *testing.T) {
+	app, _, dbConn := newTestApp(t, llm.NewMock())
+	cookie, _ := signUp(t, app, dbConn, "owner@example.com")
+
+	res := doProviderRequest(t, app, http.MethodPost, "/api/v1/llm/providers", cookie, validProviderPayload("router"))
+	require.Equal(t, http.StatusCreated, res.StatusCode)
+	provider := decodeProvider(t, res)
+
+	t.Run("create with pin", func(t *testing.T) {
+		res := createJob(t, app, cookie, map[string]any{
+			"schedule":    "0 8 * * *",
+			"prompt":      "hi",
+			"provider_id": provider.ID,
+			"model":       "router-model-2",
+		})
+		require.Equal(t, http.StatusCreated, res.StatusCode)
+		job := decodeJob(t, res)
+		assert.Equal(t, provider.ID, job.ProviderID)
+		assert.Equal(t, "router-model-2", job.Model)
+	})
+
+	t.Run("unknown provider", func(t *testing.T) {
+		res := createJob(t, app, cookie, map[string]any{
+			"schedule": "0 8 * * *", "prompt": "hi", "provider_id": 999,
+		})
+		assert.Equal(t, http.StatusNotFound, res.StatusCode)
+	})
+
+	t.Run("model not in provider", func(t *testing.T) {
+		res := createJob(t, app, cookie, map[string]any{
+			"schedule": "0 8 * * *", "prompt": "hi", "provider_id": provider.ID, "model": "nope",
+		})
+		assert.Equal(t, http.StatusBadRequest, res.StatusCode)
+	})
+
+	t.Run("model without provider is ignored", func(t *testing.T) {
+		res := createJob(t, app, cookie, map[string]any{
+			"schedule": "0 8 * * *", "prompt": "hi", "model": "nope",
+		})
+		require.Equal(t, http.StatusCreated, res.StatusCode)
+		job := decodeJob(t, res)
+		assert.Zero(t, job.ProviderID)
+		assert.Empty(t, job.Model)
+	})
+}
+
+func TestUpdateJobProviderPin(t *testing.T) {
+	app, _, dbConn := newTestApp(t, llm.NewMock())
+	cookie, _ := signUp(t, app, dbConn, "owner@example.com")
+
+	res := doProviderRequest(t, app, http.MethodPost, "/api/v1/llm/providers", cookie, validProviderPayload("router"))
+	require.Equal(t, http.StatusCreated, res.StatusCode)
+	provider := decodeProvider(t, res)
+
+	created := mustCreateJob(t, app, cookie, "0 8 * * *", "hi")
+	path := "/api/v1/jobs/" + itoa(created.ID)
+
+	t.Run("pin provider and model", func(t *testing.T) {
+		res := doJobsRequest(t, app, http.MethodPatch, path, cookie, map[string]any{
+			"provider_id": provider.ID,
+			"model":       "router-model-1",
+		})
+		require.Equal(t, http.StatusOK, res.StatusCode)
+		job := decodeJob(t, res)
+		assert.Equal(t, provider.ID, job.ProviderID)
+		assert.Equal(t, "router-model-1", job.Model)
+	})
+
+	t.Run("clear pin", func(t *testing.T) {
+		res := doJobsRequest(t, app, http.MethodPatch, path, cookie, map[string]any{"provider_id": 0})
+		require.Equal(t, http.StatusOK, res.StatusCode)
+		job := decodeJob(t, res)
+		assert.Zero(t, job.ProviderID)
+		assert.Empty(t, job.Model)
+	})
+
+	t.Run("invalid pin rejected", func(t *testing.T) {
+		res := doJobsRequest(t, app, http.MethodPatch, path, cookie, map[string]any{"provider_id": 999})
+		assert.Equal(t, http.StatusNotFound, res.StatusCode)
+
+		res = doJobsRequest(t, app, http.MethodPatch, path, cookie, map[string]any{
+			"provider_id": provider.ID,
+			"model":       "nope",
+		})
+		assert.Equal(t, http.StatusBadRequest, res.StatusCode)
+	})
 }
 
 func itoa(id int64) string {

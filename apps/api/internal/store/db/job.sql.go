@@ -41,18 +41,20 @@ func (q *Queries) ClaimJob(ctx context.Context, arg ClaimJobParams) (int64, erro
 }
 
 const createJob = `-- name: CreateJob :one
-INSERT INTO jobs (user_id, session_id, schedule, prompt, enabled, next_run_at)
-VALUES (?, ?, ?, ?, ?, ?)
-RETURNING id, user_id, session_id, schedule, prompt, enabled, last_run_at, last_status, next_run_at, created_at, updated_at
+INSERT INTO jobs (user_id, session_id, schedule, prompt, enabled, next_run_at, provider_id, model)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id, user_id, session_id, schedule, prompt, enabled, last_run_at, last_status, next_run_at, created_at, updated_at, provider_id, model
 `
 
 type CreateJobParams struct {
-	UserID    int64
-	SessionID sql.NullInt64
-	Schedule  string
-	Prompt    string
-	Enabled   int64
-	NextRunAt sql.NullTime
+	UserID     int64
+	SessionID  sql.NullInt64
+	Schedule   string
+	Prompt     string
+	Enabled    int64
+	NextRunAt  sql.NullTime
+	ProviderID sql.NullInt64
+	Model      string
 }
 
 func (q *Queries) CreateJob(ctx context.Context, arg CreateJobParams) (Job, error) {
@@ -63,6 +65,8 @@ func (q *Queries) CreateJob(ctx context.Context, arg CreateJobParams) (Job, erro
 		arg.Prompt,
 		arg.Enabled,
 		arg.NextRunAt,
+		arg.ProviderID,
+		arg.Model,
 	)
 	var i Job
 	err := row.Scan(
@@ -77,6 +81,8 @@ func (q *Queries) CreateJob(ctx context.Context, arg CreateJobParams) (Job, erro
 		&i.NextRunAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ProviderID,
+		&i.Model,
 	)
 	return i, err
 }
@@ -92,7 +98,7 @@ func (q *Queries) DeleteJob(ctx context.Context, id int64) error {
 }
 
 const getJob = `-- name: GetJob :one
-SELECT id, user_id, session_id, schedule, prompt, enabled, last_run_at, last_status, next_run_at, created_at, updated_at
+SELECT id, user_id, session_id, schedule, prompt, enabled, last_run_at, last_status, next_run_at, created_at, updated_at, provider_id, model
 FROM jobs
 WHERE id = ?
 `
@@ -112,12 +118,14 @@ func (q *Queries) GetJob(ctx context.Context, id int64) (Job, error) {
 		&i.NextRunAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ProviderID,
+		&i.Model,
 	)
 	return i, err
 }
 
 const listDueJobs = `-- name: ListDueJobs :many
-SELECT id, user_id, session_id, schedule, prompt, enabled, last_run_at, last_status, next_run_at, created_at, updated_at
+SELECT id, user_id, session_id, schedule, prompt, enabled, last_run_at, last_status, next_run_at, created_at, updated_at, provider_id, model
 FROM jobs
 WHERE enabled = 1 AND next_run_at IS NOT NULL AND next_run_at <= ?
 ORDER BY next_run_at, id
@@ -144,6 +152,8 @@ func (q *Queries) ListDueJobs(ctx context.Context, nextRunAt sql.NullTime) ([]Jo
 			&i.NextRunAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.ProviderID,
+			&i.Model,
 		); err != nil {
 			return nil, err
 		}
@@ -159,7 +169,7 @@ func (q *Queries) ListDueJobs(ctx context.Context, nextRunAt sql.NullTime) ([]Jo
 }
 
 const listJobsByUser = `-- name: ListJobsByUser :many
-SELECT id, user_id, session_id, schedule, prompt, enabled, last_run_at, last_status, next_run_at, created_at, updated_at
+SELECT id, user_id, session_id, schedule, prompt, enabled, last_run_at, last_status, next_run_at, created_at, updated_at, provider_id, model
 FROM jobs
 WHERE user_id = ?
 ORDER BY id
@@ -186,6 +196,8 @@ func (q *Queries) ListJobsByUser(ctx context.Context, userID int64) ([]Job, erro
 			&i.NextRunAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.ProviderID,
+			&i.Model,
 		); err != nil {
 			return nil, err
 		}
@@ -234,17 +246,19 @@ func (q *Queries) SetJobStatus(ctx context.Context, arg SetJobStatusParams) erro
 
 const updateJob = `-- name: UpdateJob :one
 UPDATE jobs
-SET schedule = ?, prompt = ?, enabled = ?, next_run_at = ?, updated_at = CURRENT_TIMESTAMP
+SET schedule = ?, prompt = ?, enabled = ?, next_run_at = ?, provider_id = ?, model = ?, updated_at = CURRENT_TIMESTAMP
 WHERE id = ?
-RETURNING id, user_id, session_id, schedule, prompt, enabled, last_run_at, last_status, next_run_at, created_at, updated_at
+RETURNING id, user_id, session_id, schedule, prompt, enabled, last_run_at, last_status, next_run_at, created_at, updated_at, provider_id, model
 `
 
 type UpdateJobParams struct {
-	Schedule  string
-	Prompt    string
-	Enabled   int64
-	NextRunAt sql.NullTime
-	ID        int64
+	Schedule   string
+	Prompt     string
+	Enabled    int64
+	NextRunAt  sql.NullTime
+	ProviderID sql.NullInt64
+	Model      string
+	ID         int64
 }
 
 func (q *Queries) UpdateJob(ctx context.Context, arg UpdateJobParams) (Job, error) {
@@ -253,6 +267,8 @@ func (q *Queries) UpdateJob(ctx context.Context, arg UpdateJobParams) (Job, erro
 		arg.Prompt,
 		arg.Enabled,
 		arg.NextRunAt,
+		arg.ProviderID,
+		arg.Model,
 		arg.ID,
 	)
 	var i Job
@@ -268,6 +284,8 @@ func (q *Queries) UpdateJob(ctx context.Context, arg UpdateJobParams) (Job, erro
 		&i.NextRunAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ProviderID,
+		&i.Model,
 	)
 	return i, err
 }

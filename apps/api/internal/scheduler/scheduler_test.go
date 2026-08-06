@@ -213,6 +213,70 @@ func TestRunOnceUsesOwnerProvider(t *testing.T) {
 	assert.Equal(t, "owner-model", gotModel)
 }
 
+// TestRunOnceUsesJobProvider verifies a job pinned to a provider/model wins
+// over the owner's default resolution.
+func TestRunOnceUsesJobProvider(t *testing.T) {
+	var defaultAuth, defaultModel, pinnedAuth, pinnedModel string
+	newUpstream := func(auth, model *string) *httptest.Server {
+		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			*auth = r.Header.Get("Authorization")
+			var body struct {
+				Model string `json:"model"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			*model = body.Model
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"done\"},\"finish_reason\":null}]}\n\n"))
+			_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n"))
+			_, _ = w.Write([]byte("data: [DONE]\n\n"))
+		}))
+	}
+	defaultUpstream := newUpstream(&defaultAuth, &defaultModel)
+	defer defaultUpstream.Close()
+	pinnedUpstream := newUpstream(&pinnedAuth, &pinnedModel)
+	defer pinnedUpstream.Close()
+
+	s, dbConn := newStore(t)
+	seedUser(t, dbConn, 1)
+
+	seedProvider := func(name, baseURL string, isDefault int64) int64 {
+		t.Helper()
+		provider, err := s.CreateLLMProvider(t.Context(), db.CreateLLMProviderParams{
+			Name: name, Provider: "openai", BaseUrl: baseURL, ApiKey: "sk-" + name, IsDefault: isDefault,
+		})
+		require.NoError(t, err)
+		return provider.ID
+	}
+	seedProvider("default", defaultUpstream.URL, 1)
+	pinnedID := seedProvider("pinned", pinnedUpstream.URL, 0)
+
+	engine := &chat.Engine{
+		Store:       s,
+		LLM:         &chat.LLMResolver{Store: s, Default: llm.NewMock()},
+		Tools:       tool.NewRegistry(),
+		Permissions: permission.NewRuleset(permission.Allow, nil),
+		Headless:    true,
+	}
+	sched := scheduler.New(s, engine, time.Minute)
+
+	_, err := s.CreateJob(t.Context(), db.CreateJobParams{
+		UserID:     1,
+		Schedule:   "0 8 * * *",
+		Prompt:     "brief me",
+		Enabled:    1,
+		NextRunAt:  sql.NullTime{Time: time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC), Valid: true},
+		ProviderID: sql.NullInt64{Int64: pinnedID, Valid: true},
+		Model:      "pinned-model",
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, sched.RunOnce(t.Context()))
+
+	assert.Empty(t, defaultAuth)
+	assert.Equal(t, "Bearer sk-pinned", pinnedAuth)
+	assert.Equal(t, "pinned-model", pinnedModel)
+}
+
 func TestRunOnceSkipsDisabledAndFutureJobs(t *testing.T) {
 	s, dbConn := newStore(t)
 	seedUser(t, dbConn, 1)

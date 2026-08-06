@@ -1,6 +1,6 @@
 -- name: CreateJob :one
-INSERT INTO jobs (user_id, session_id, schedule, prompt, enabled, next_run_at)
-VALUES (?, ?, ?, ?, ?, ?)
+INSERT INTO jobs (user_id, session_id, schedule, prompt, enabled, next_run_at, provider_id, model)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 RETURNING *;
 
 -- name: GetJob :one
@@ -16,7 +16,7 @@ ORDER BY id;
 
 -- name: UpdateJob :one
 UPDATE jobs
-SET schedule = ?, prompt = ?, enabled = ?, next_run_at = ?, updated_at = CURRENT_TIMESTAMP
+SET schedule = ?, prompt = ?, enabled = ?, next_run_at = ?, provider_id = ?, model = ?, updated_at = CURRENT_TIMESTAMP
 WHERE id = ?
 RETURNING *;
 

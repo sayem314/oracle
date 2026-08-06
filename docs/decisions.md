@@ -2,6 +2,12 @@
 
 Lightweight ADRs. Latest first.
 
+## 2026-08-06: Per-job provider pin (Step 12 follow-up)
+
+- Jobs previously ran with the owner's resolved default (preference > global default > env). A scheduled brief that should always use a specific gateway/model had no way to say so. `jobs` gains `provider_id` (FK -> llm_providers, ON DELETE SET NULL) and `model`; the scheduler passes them into `Engine.Run`, so the pin slots into the existing precedence: explicit job pin > owner preference > global default > env.
+- The pin is validated on write with the same rule as `llm/prefs`: the provider must exist (404) and the model, when set, must belong to it (400). A model without a provider is ignored (dropped) rather than stored, since a model can't mean anything without a gateway. Deleting a pinned provider nulls the pin and the job silently falls back to the owner's default.
+- The job form gained the same optgroup picker as the chat composer ("My default (my preference)" on top), and the job list shows the pin so a pinned job is distinguishable at a glance.
+
 ## 2026-08-06: Global provider profiles, per-user default preference (Step 12)
 
 - The single per-user `user_settings` row was too rigid: one provider config per user meant switching gateways required editing settings each time. It is replaced by `llm_providers` (named profiles: name, `openai` type, base URL, API key, `is_default`), each with `llm_models` rows (name, `is_default`), so the instance keeps several gateways (OpenRouter, Ollama, a local proxy...) and a model list per gateway. Models are rows, not a JSON blob, for the same reason tool calls are rows: queryable, replaceable per profile, and sqlc-friendly. The Step 11 table was dropped in 00007 (pre-launch, and the goose Down restores it).

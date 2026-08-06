@@ -148,7 +148,12 @@ func (s *Scheduler) execute(ctx context.Context, job db.Job) error {
 		return fmt.Errorf("build history: %w", err)
 	}
 
-	if err := s.engine.Run(ctx, chat.DiscardSink{}, sessionID, job.UserID, 0, llm.Request{Messages: history}); err != nil {
+	var providerID int64
+	if job.ProviderID.Valid {
+		providerID = job.ProviderID.Int64
+	}
+
+	if err := s.engine.Run(ctx, chat.DiscardSink{}, sessionID, job.UserID, providerID, llm.Request{Model: job.Model, Messages: history}); err != nil {
 		return fmt.Errorf("run: %w", err)
 	}
 	return nil
