@@ -9,6 +9,7 @@ func NewBuiltin() []Tool {
 		webFetchTool(httpClient()),
 		webSearchTool(httpClient()),
 		weatherTool(httpClient()),
+		convertTool(),
 		mathEvalTool(),
 	}
 }
