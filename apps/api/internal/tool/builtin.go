@@ -8,6 +8,7 @@ func NewBuiltin() []Tool {
 		timezoneConvertTool(),
 		webFetchTool(httpClient()),
 		webSearchTool(httpClient()),
+		httpRequestTool(httpClient()),
 		weatherTool(httpClient()),
 		convertTool(),
 		mathEvalTool(),
