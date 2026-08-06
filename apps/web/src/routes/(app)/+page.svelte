@@ -5,9 +5,11 @@
     decideApproval,
     listSessions,
     listSessionMessages,
+    listLLMProviders,
     renameSession,
     deleteSession,
     type ChatStreamCallbacks,
+    type LLMProvider,
     type SessionInfo,
   } from "$lib/api";
 
@@ -28,7 +30,8 @@
   let activeSessionId = $state<number | null>(null);
 
   let input = $state("");
-  let modelOverride = $state("");
+  let selection = $state("");
+  let providers = $state<LLMProvider[]>([]);
   let streaming = $state(false);
   let streamingContent = $state("");
   let error = $state("");
@@ -45,7 +48,16 @@
 
   onMount(() => {
     void refreshSessions();
+    void refreshProviders();
   });
+
+  async function refreshProviders() {
+    try {
+      providers = await listLLMProviders();
+    } catch {
+      // A failed provider load should not block chatting.
+    }
+  }
 
   async function scrollToBottom() {
     await tick();
@@ -235,8 +247,10 @@
 
     input = "";
     blocks = [...blocks, { kind: "user", content: message }];
-    const model = modelOverride.trim() || undefined;
-    await run((cb) => streamChat({ sessionId: activeSessionId, message, model, signal: aborter?.signal }, cb));
+    const [providerId, model] = parseSelection(selection);
+    await run((cb) =>
+      streamChat({ sessionId: activeSessionId, message, providerId, model, signal: aborter?.signal }, cb),
+    );
   }
 
   async function decide(rowId: number, decision: "approve" | "deny") {
@@ -266,6 +280,12 @@
 
   function titleOf(s: SessionInfo): string {
     return s.title.trim() || `Session ${s.id}`;
+  }
+
+  function parseSelection(value: string): [number | undefined, string | undefined] {
+    if (!value) return [undefined, undefined];
+    const [id, model] = value.split(":", 2);
+    return [Number(id), model || undefined];
   }
 </script>
 
@@ -384,13 +404,18 @@
             disabled={streaming || awaitingApproval}></textarea>
           <button type="submit" class="send" disabled={streaming || awaitingApproval || !input.trim()}>Send</button>
         </div>
-        <input
-          class="model-override"
-          type="text"
-          bind:value={modelOverride}
-          placeholder="Model override (leave blank for your default)"
-          disabled={streaming || awaitingApproval}
-        />
+        {#if providers.length > 0}
+          <select class="model-picker" bind:value={selection} disabled={streaming || awaitingApproval}>
+            <option value="">Default provider &amp; model</option>
+            {#each providers as p (p.id)}
+              <optgroup label={p.name}>
+                {#each p.models as m (m)}
+                  <option value={`${p.id}:${m}`}>{m}{m === p.default_model ? " (default)" : ""}</option>
+                {/each}
+              </optgroup>
+            {/each}
+          </select>
+        {/if}
       </form>
     </div>
   </div>
@@ -663,17 +688,19 @@
     align-items: flex-end;
   }
 
-  .model-override {
+  .model-picker {
+    align-self: flex-start;
     background: var(--bg-input);
     border: 1px solid var(--border);
     border-radius: 10px;
     padding: 6px 12px;
     font-size: 12px;
-    color: var(--text-dim);
+    color: var(--text);
     outline: none;
+    max-width: 100%;
   }
 
-  .model-override:focus {
+  .model-picker:focus {
     border-color: var(--accent);
   }
 

@@ -54,6 +54,25 @@ type Job struct {
 	UpdatedAt  time.Time
 }
 
+type LlmModel struct {
+	ID         int64
+	ProviderID int64
+	Name       string
+	IsDefault  int64
+}
+
+type LlmProvider struct {
+	ID        int64
+	UserID    int64
+	Name      string
+	Provider  string
+	BaseUrl   string
+	ApiKey    string
+	IsDefault int64
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
 type Message struct {
 	ID        int64
 	SessionID int64
@@ -79,13 +98,4 @@ type ToolCall struct {
 	Result    string
 	Status    string
 	CreatedAt time.Time
-}
-
-type UserSetting struct {
-	UserID      int64
-	LlmProvider string
-	LlmBaseUrl  string
-	LlmApiKey   string
-	LlmModel    string
-	UpdatedAt   time.Time
 }

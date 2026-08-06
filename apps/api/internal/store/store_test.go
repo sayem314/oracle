@@ -313,7 +313,7 @@ func TestMigrateIsIdempotent(t *testing.T) {
 
 	applied, err := store.Migrate(dbConn)
 	require.NoError(t, err)
-	assert.Equal(t, 6, applied)
+	assert.Equal(t, 7, applied)
 
 	applied, err = store.Migrate(dbConn)
 	require.NoError(t, err)
@@ -438,41 +438,86 @@ func TestListDueJobs(t *testing.T) {
 	assert.Equal(t, "due", got[0].Prompt)
 }
 
-func TestUserSettings(t *testing.T) {
+func TestLLMProviders(t *testing.T) {
 	s, dbConn := openStore(t)
 	ctx := t.Context()
 	seedUser(t, dbConn, 1)
 
-	_, err := s.GetUserSettings(ctx, 1)
+	_, err := s.GetDefaultLLMProvider(ctx, 1)
 	require.ErrorIs(t, err, sql.ErrNoRows)
 
-	created, err := s.UpsertUserSettings(ctx, db.UpsertUserSettingsParams{
-		UserID:      1,
-		LlmProvider: "openai",
-		LlmBaseUrl:  "https://api.example.com/v1",
-		LlmApiKey:   "sk-test",
-		LlmModel:    "example-1",
+	created, err := s.CreateLLMProvider(ctx, db.CreateLLMProviderParams{
+		UserID:    1,
+		Name:      "OpenRouter",
+		Provider:  "openai",
+		BaseUrl:   "https://openrouter.ai/api/v1",
+		ApiKey:    "sk-test",
+		IsDefault: 1,
 	})
 	require.NoError(t, err)
-	assert.Equal(t, int64(1), created.UserID)
-	assert.Equal(t, "openai", created.LlmProvider)
+	assert.Positive(t, created.ID)
 
-	got, err := s.GetUserSettings(ctx, 1)
+	require.NoError(t, s.InsertLLMModel(ctx, db.InsertLLMModelParams{ProviderID: created.ID, Name: "model-a"}))
+	require.NoError(t, s.InsertLLMModel(ctx, db.InsertLLMModelParams{ProviderID: created.ID, Name: "model-b", IsDefault: 1}))
+
+	models, err := s.ListLLMModelsByProvider(ctx, created.ID)
 	require.NoError(t, err)
-	assert.Equal(t, created, got)
+	require.Len(t, models, 2)
+	assert.Equal(t, "model-a", models[0].Name)
+	assert.Equal(t, int64(1), models[1].IsDefault)
 
-	updated, err := s.UpsertUserSettings(ctx, db.UpsertUserSettingsParams{
-		UserID:      1,
-		LlmProvider: "openai",
-		LlmBaseUrl:  "https://other.example.com/v1",
-		LlmApiKey:   "sk-rotated",
-		LlmModel:    "example-2",
+	def, err := s.GetDefaultLLMProvider(ctx, 1)
+	require.NoError(t, err)
+	assert.Equal(t, created.ID, def.ID)
+
+	second, err := s.CreateLLMProvider(ctx, db.CreateLLMProviderParams{
+		UserID: 1, Name: "Ollama", Provider: "openai", BaseUrl: "http://localhost:11434/v1", ApiKey: "ollama",
 	})
 	require.NoError(t, err)
-	assert.Equal(t, "https://other.example.com/v1", updated.LlmBaseUrl)
-	assert.Equal(t, "sk-rotated", updated.LlmApiKey)
 
-	require.NoError(t, s.DeleteUserSettings(ctx, 1))
-	_, err = s.GetUserSettings(ctx, 1)
+	require.NoError(t, s.ClearDefaultLLMProviders(ctx, 1))
+	updated, err := s.UpdateLLMProvider(ctx, db.UpdateLLMProviderParams{
+		Name: "Ollama", Provider: "openai", BaseUrl: "http://localhost:11434/v1", ApiKey: "ollama",
+		IsDefault: 1, ID: second.ID,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), updated.IsDefault)
+
+	def, err = s.GetDefaultLLMProvider(ctx, 1)
+	require.NoError(t, err)
+	assert.Equal(t, second.ID, def.ID)
+
+	list, err := s.ListLLMProvidersByUser(ctx, 1)
+	require.NoError(t, err)
+	assert.Len(t, list, 2)
+
+	require.NoError(t, s.DeleteLLMModelsByProvider(ctx, created.ID))
+	models, err = s.ListLLMModelsByProvider(ctx, created.ID)
+	require.NoError(t, err)
+	assert.Empty(t, models)
+
+	require.NoError(t, s.DeleteLLMProvider(ctx, created.ID))
+	_, err = s.GetLLMProvider(ctx, created.ID)
 	require.ErrorIs(t, err, sql.ErrNoRows)
+}
+
+func TestLLMProviderUniqueNamePerUser(t *testing.T) {
+	s, dbConn := openStore(t)
+	ctx := t.Context()
+	seedUser(t, dbConn, 1)
+	seedUser(t, dbConn, 2)
+
+	params := db.CreateLLMProviderParams{
+		UserID: 1, Name: "main", Provider: "openai", BaseUrl: "https://api.example.com/v1", ApiKey: "sk-test",
+	}
+	_, err := s.CreateLLMProvider(ctx, params)
+	require.NoError(t, err)
+
+	_, err = s.CreateLLMProvider(ctx, params)
+	require.Error(t, err)
+
+	// The same name is allowed for a different user.
+	params.UserID = 2
+	_, err = s.CreateLLMProvider(ctx, params)
+	require.NoError(t, err)
 }

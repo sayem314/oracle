@@ -41,9 +41,16 @@ type Store interface {
 	SetJobStatus(ctx context.Context, arg db.SetJobStatusParams) error
 	SetJobSession(ctx context.Context, arg db.SetJobSessionParams) error
 
-	GetUserSettings(ctx context.Context, userID int64) (db.UserSetting, error)
-	UpsertUserSettings(ctx context.Context, arg db.UpsertUserSettingsParams) (db.UserSetting, error)
-	DeleteUserSettings(ctx context.Context, userID int64) error
+	CreateLLMProvider(ctx context.Context, arg db.CreateLLMProviderParams) (db.LlmProvider, error)
+	GetLLMProvider(ctx context.Context, id int64) (db.LlmProvider, error)
+	ListLLMProvidersByUser(ctx context.Context, userID int64) ([]db.LlmProvider, error)
+	GetDefaultLLMProvider(ctx context.Context, userID int64) (db.LlmProvider, error)
+	UpdateLLMProvider(ctx context.Context, arg db.UpdateLLMProviderParams) (db.LlmProvider, error)
+	ClearDefaultLLMProviders(ctx context.Context, userID int64) error
+	DeleteLLMProvider(ctx context.Context, id int64) error
+	ListLLMModelsByProvider(ctx context.Context, providerID int64) ([]db.LlmModel, error)
+	InsertLLMModel(ctx context.Context, arg db.InsertLLMModelParams) error
+	DeleteLLMModelsByProvider(ctx context.Context, providerID int64) error
 }
 
 // sqlStore embeds the generated Queries and adds methods that need more than

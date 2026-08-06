@@ -83,7 +83,7 @@ func (DiscardSink) Send(string, any) error { return nil }
 
 // Resolver picks the LLM provider for a run.
 type Resolver interface {
-	Resolve(ctx context.Context, userID int64) (llm.Provider, error)
+	Resolve(ctx context.Context, userID, providerID int64, model string) (llm.Provider, error)
 }
 
 // Engine drives the model->tool->model loop shared by the chat and approval
@@ -107,9 +107,10 @@ func (e *Engine) AsHeadless() *Engine {
 // Run drives rounds until the model produces a final answer, tool approval
 // pauses the run, or the round limit trips. req.Messages holds the
 // conversation so far and is extended each round. The provider is resolved
-// once for userID and reused across rounds.
-func (e *Engine) Run(ctx context.Context, sink Sink, sessionID, userID int64, req llm.Request) error {
-	provider, err := e.LLM.Resolve(ctx, userID)
+// once for userID and providerID (0 = the user's default) and reused across
+// rounds.
+func (e *Engine) Run(ctx context.Context, sink Sink, sessionID, userID, providerID int64, req llm.Request) error {
+	provider, err := e.LLM.Resolve(ctx, userID, providerID, req.Model)
 	if err != nil {
 		return err
 	}

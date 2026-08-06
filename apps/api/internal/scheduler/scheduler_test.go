@@ -161,9 +161,9 @@ func TestRunOnceExecutesDueJob(t *testing.T) {
 	assert.Len(t, msgs, 2)
 }
 
-// TestRunOnceUsesOwnerSettings verifies headless runs resolve the job owner's
-// stored LLM settings instead of the server default provider.
-func TestRunOnceUsesOwnerSettings(t *testing.T) {
+// TestRunOnceUsesOwnerProvider verifies headless runs resolve the job owner's
+// default LLM provider profile instead of the server default provider.
+func TestRunOnceUsesOwnerProvider(t *testing.T) {
 	var gotAuth, gotModel string
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotAuth = r.Header.Get("Authorization")
@@ -183,14 +183,20 @@ func TestRunOnceUsesOwnerSettings(t *testing.T) {
 	s, dbConn := newStore(t)
 	seedUser(t, dbConn, 1)
 
-	_, err := s.UpsertUserSettings(t.Context(), db.UpsertUserSettingsParams{
-		UserID:      1,
-		LlmProvider: "openai",
-		LlmBaseUrl:  upstream.URL,
-		LlmApiKey:   "sk-owner",
-		LlmModel:    "owner-model",
+	provider, err := s.CreateLLMProvider(t.Context(), db.CreateLLMProviderParams{
+		UserID:    1,
+		Name:      "owner",
+		Provider:  "openai",
+		BaseUrl:   upstream.URL,
+		ApiKey:    "sk-owner",
+		IsDefault: 1,
 	})
 	require.NoError(t, err)
+	require.NoError(t, s.InsertLLMModel(t.Context(), db.InsertLLMModelParams{
+		ProviderID: provider.ID,
+		Name:       "owner-model",
+		IsDefault:  1,
+	}))
 
 	engine := &chat.Engine{
 		Store:       s,

@@ -39,53 +39,91 @@ func seedUser(t *testing.T, dbConn *sql.DB, id int64) {
 	require.NoError(t, err)
 }
 
-func TestLLMResolverDefault(t *testing.T) {
+// seedProvider creates an OpenAI-compatible profile with one default model and
+// returns the provider id.
+func seedProvider(t *testing.T, s store.Store, userID int64, name string, isDefault int64) int64 {
+	t.Helper()
+
+	provider, err := s.CreateLLMProvider(t.Context(), db.CreateLLMProviderParams{
+		UserID:    userID,
+		Name:      name,
+		Provider:  "openai",
+		BaseUrl:   "https://api.example.com/v1",
+		ApiKey:    "sk-" + name,
+		IsDefault: isDefault,
+	})
+	require.NoError(t, err)
+	require.NoError(t, s.InsertLLMModel(t.Context(), db.InsertLLMModelParams{
+		ProviderID: provider.ID,
+		Name:       name + "-model",
+		IsDefault:  1,
+	}))
+	return provider.ID
+}
+
+func TestLLMResolverServerDefault(t *testing.T) {
 	s, dbConn := newStore(t)
 	seedUser(t, dbConn, 1)
 	defaultProvider := llm.NewMock()
 	r := &chat.LLMResolver{Store: s, Default: defaultProvider}
 
-	got, err := r.Resolve(t.Context(), 1)
+	got, err := r.Resolve(t.Context(), 1, 0, "")
 	require.NoError(t, err)
 	assert.Same(t, defaultProvider, got)
 }
 
-func TestLLMResolverUserSettings(t *testing.T) {
+func TestLLMResolverDefaultProfile(t *testing.T) {
 	s, dbConn := newStore(t)
 	seedUser(t, dbConn, 1)
-	seedUser(t, dbConn, 2)
 	defaultProvider := llm.NewMock()
 	r := &chat.LLMResolver{Store: s, Default: defaultProvider}
 
-	_, err := s.UpsertUserSettings(t.Context(), db.UpsertUserSettingsParams{
-		UserID:      1,
-		LlmProvider: "openai",
-		LlmBaseUrl:  "https://api.example.com/v1",
-		LlmApiKey:   "sk-test",
-		LlmModel:    "example-1",
-	})
-	require.NoError(t, err)
+	seedProvider(t, s, 1, "main", 1)
+	seedProvider(t, s, 1, "other", 0)
 
-	got, err := r.Resolve(t.Context(), 1)
+	got, err := r.Resolve(t.Context(), 1, 0, "")
 	require.NoError(t, err)
 	assert.NotSame(t, defaultProvider, got)
-
-	// A user without settings falls back to the default provider.
-	other, err := r.Resolve(t.Context(), 2)
-	require.NoError(t, err)
-	assert.Same(t, defaultProvider, other)
 }
 
-func TestLLMResolverMissingAPIKey(t *testing.T) {
+func TestLLMResolverExplicitProfile(t *testing.T) {
 	s, dbConn := newStore(t)
 	seedUser(t, dbConn, 1)
 	r := &chat.LLMResolver{Store: s, Default: llm.NewMock()}
 
-	_, err := dbConn.Exec(
-		"INSERT INTO user_settings (user_id, llm_provider, llm_base_url, llm_api_key, llm_model) VALUES (1, 'openai', 'https://api.example.com/v1', '', 'example-1')",
-	)
+	mainID := seedProvider(t, s, 1, "main", 1)
+	otherID := seedProvider(t, s, 1, "other", 0)
+
+	got, err := r.Resolve(t.Context(), 1, otherID, "")
+	require.NoError(t, err)
+	assert.NotNil(t, got)
+
+	// A profile of another user is not resolvable.
+	seedUser(t, dbConn, 2)
+	_, err = r.Resolve(t.Context(), 2, mainID, "")
+	require.ErrorContains(t, err, "provider not found")
+
+	_, err = r.Resolve(t.Context(), 1, 999, "")
+	require.ErrorContains(t, err, "provider not found")
+}
+
+func TestLLMResolverProfileWithoutModels(t *testing.T) {
+	s, dbConn := newStore(t)
+	seedUser(t, dbConn, 1)
+	r := &chat.LLMResolver{Store: s, Default: llm.NewMock()}
+
+	provider, err := s.CreateLLMProvider(t.Context(), db.CreateLLMProviderParams{
+		UserID: 1, Name: "bare", Provider: "openai",
+		BaseUrl: "https://api.example.com/v1", ApiKey: "sk-bare", IsDefault: 1,
+	})
 	require.NoError(t, err)
 
-	_, err = r.Resolve(t.Context(), 1)
-	require.ErrorContains(t, err, "missing an api key")
+	// No models configured: an explicit model override still works.
+	got, err := r.Resolve(t.Context(), 1, provider.ID, "ad-hoc-model")
+	require.NoError(t, err)
+	assert.NotNil(t, got)
+
+	// Without one, resolution fails cleanly instead of calling the gateway.
+	_, err = r.Resolve(t.Context(), 1, provider.ID, "")
+	require.ErrorContains(t, err, "no model configured")
 }

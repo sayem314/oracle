@@ -1,20 +1,36 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { getSettings, saveSettings, type LLMSettings } from "$lib/api";
+  import {
+    listLLMProviders,
+    createLLMProvider,
+    updateLLMProvider,
+    deleteLLMProvider,
+    type LLMProvider,
+  } from "$lib/api";
 
-  let provider = $state("");
-  let baseUrl = $state("");
-  let apiKey = $state("");
-  let model = $state("");
-  let hasApiKey = $state(false);
-
+  let providers = $state<LLMProvider[]>([]);
   let loading = $state(true);
   let saving = $state(false);
   let error = $state("");
   let notice = $state("");
 
-  let custom = $derived(provider === "openai");
-  let canSave = $derived(!custom || (baseUrl.trim() !== "" && model.trim() !== "" && (apiKey !== "" || hasApiKey)));
+  let editingId = $state<number | null>(null);
+  let name = $state("");
+  let baseUrl = $state("");
+  let apiKey = $state("");
+  let modelsText = $state("");
+  let defaultModel = $state("");
+
+  let models = $derived(
+    modelsText
+      .split(",")
+      .map((m) => m.trim())
+      .filter((m, i, all) => m !== "" && all.indexOf(m) === i),
+  );
+  let hasApiKey = $derived(providers.find((p) => p.id === editingId)?.has_api_key ?? false);
+  let canSave = $derived(
+    name.trim() !== "" && baseUrl.trim() !== "" && (editingId === null || apiKey !== "" || hasApiKey),
+  );
 
   onMount(() => {
     void refresh();
@@ -23,21 +39,34 @@
   async function refresh() {
     error = "";
     try {
-      const s = await getSettings();
-      apply(s);
+      providers = await listLLMProviders();
     } catch (err) {
-      error = err instanceof Error ? err.message : "failed to load settings";
+      error = err instanceof Error ? err.message : "failed to load providers";
     } finally {
       loading = false;
     }
   }
 
-  function apply(s: LLMSettings) {
-    provider = s.provider;
-    baseUrl = s.base_url;
-    model = s.model;
-    hasApiKey = s.has_api_key;
+  function startAdd() {
+    editingId = null;
+    name = "";
+    baseUrl = "";
     apiKey = "";
+    modelsText = "";
+    defaultModel = "";
+    error = "";
+    notice = "";
+  }
+
+  function startEdit(p: LLMProvider) {
+    editingId = p.id;
+    name = p.name;
+    baseUrl = p.base_url;
+    apiKey = "";
+    modelsText = p.models.join(", ");
+    defaultModel = p.default_model;
+    error = "";
+    notice = "";
   }
 
   async function submit() {
@@ -45,19 +74,59 @@
     saving = true;
     error = "";
     notice = "";
+    const payload = {
+      name: name.trim(),
+      provider: "openai",
+      base_url: baseUrl.trim(),
+      api_key: apiKey.trim(),
+      models,
+      default_model: defaultModel || undefined,
+    };
     try {
-      const saved = await saveSettings({
-        provider,
-        base_url: baseUrl.trim(),
-        api_key: apiKey.trim(),
-        model: model.trim(),
-      });
-      apply(saved);
-      notice = provider === "" ? "Using the server default provider." : "Settings saved.";
+      if (editingId === null) {
+        await createLLMProvider(payload);
+      } else {
+        await updateLLMProvider(editingId, payload);
+      }
+      notice = editingId === null ? "Provider added." : "Provider updated.";
+      startAdd();
+      await refresh();
     } catch (err) {
-      error = err instanceof Error ? err.message : "failed to save settings";
+      error = err instanceof Error ? err.message : "failed to save provider";
     } finally {
       saving = false;
+    }
+  }
+
+  async function makeDefault(p: LLMProvider) {
+    error = "";
+    notice = "";
+    try {
+      await updateLLMProvider(p.id, {
+        name: p.name,
+        provider: p.provider,
+        base_url: p.base_url,
+        models: p.models,
+        default_model: p.default_model,
+        default: true,
+      });
+      notice = `${p.name} is now the default.`;
+      await refresh();
+    } catch (err) {
+      error = err instanceof Error ? err.message : "failed to set default";
+    }
+  }
+
+  async function remove(p: LLMProvider) {
+    error = "";
+    notice = "";
+    try {
+      await deleteLLMProvider(p.id);
+      if (editingId === p.id) startAdd();
+      notice = `Deleted ${p.name}.`;
+      await refresh();
+    } catch (err) {
+      error = err instanceof Error ? err.message : "failed to delete provider";
     }
   }
 </script>
@@ -66,11 +135,17 @@
   <div class="column">
     <div class="toolbar">
       <h1>Settings</h1>
+      <button class="primary" type="button" onclick={startAdd}>Add provider</button>
     </div>
 
-    {#if loading}
-      <div class="empty">Loading...</div>
-    {:else}
+    {#if error}
+      <div class="error">{error}</div>
+    {/if}
+    {#if notice}
+      <div class="notice">{notice}</div>
+    {/if}
+
+    {#if editingId !== null || (loading && providers.length === 0)}
       <form
         class="form"
         onsubmit={(e) => {
@@ -78,61 +153,95 @@
           void submit();
         }}
       >
-        <h2>LLM provider</h2>
-        <p class="hint">
-          Choose your own OpenAI-compatible provider, or leave it on the server default. Scheduled jobs run with these
-          settings too.
-        </p>
-
+        <h2>{editingId === null ? "New provider" : "Edit provider"}</h2>
         <div class="field">
           <label>
-            Provider
-            <select bind:value={provider}>
-              <option value="">Server default</option>
-              <option value="openai">OpenAI-compatible</option>
-            </select>
+            Name
+            <input type="text" bind:value={name} placeholder="e.g. OpenRouter, Ollama" />
           </label>
         </div>
-
-        {#if custom}
+        <div class="field">
+          <label>
+            Base URL
+            <input type="url" bind:value={baseUrl} placeholder="https://api.openai.com/v1" />
+          </label>
+        </div>
+        <div class="field">
+          <label>
+            API key
+            <input
+              type="password"
+              bind:value={apiKey}
+              placeholder={editingId !== null && hasApiKey ? "Stored (leave blank to keep)" : "sk-..."}
+              autocomplete="off"
+            />
+          </label>
+        </div>
+        <div class="field">
+          <label>
+            Models (comma-separated)
+            <input type="text" bind:value={modelsText} placeholder="gpt-4o, gpt-4o-mini" />
+          </label>
+        </div>
+        {#if models.length > 0}
           <div class="field">
             <label>
-              Base URL
-              <input type="url" bind:value={baseUrl} placeholder="https://api.openai.com/v1" />
-            </label>
-          </div>
-
-          <div class="field">
-            <label>
-              API key
-              <input
-                type="password"
-                bind:value={apiKey}
-                placeholder={hasApiKey ? "Stored (leave blank to keep)" : "sk-..."}
-                autocomplete="off"
-              />
-            </label>
-          </div>
-
-          <div class="field">
-            <label>
-              Model
-              <input type="text" bind:value={model} placeholder="gpt-4o" />
+              Default model
+              <select bind:value={defaultModel}>
+                <option value="">None (choose per message)</option>
+                {#each models as m (m)}
+                  <option value={m}>{m}</option>
+                {/each}
+              </select>
             </label>
           </div>
         {/if}
-
         <div class="actions">
+          <button type="button" class="ghost" onclick={startAdd}>Cancel</button>
           <button class="primary" type="submit" disabled={saving || !canSave}>Save</button>
         </div>
       </form>
+    {/if}
 
-      {#if error}
-        <div class="error">{error}</div>
-      {/if}
-      {#if notice}
-        <div class="notice">{notice}</div>
-      {/if}
+    {#if loading}
+      <div class="empty">Loading...</div>
+    {:else if providers.length === 0 && editingId === null}
+      <div class="empty">No providers yet. Add one to use your own LLM, or chat with the server default.</div>
+    {:else}
+      <div class="list">
+        {#each providers as p (p.id)}
+          <div class="provider">
+            <div class="provider-main">
+              <div class="provider-head">
+                <span class="provider-name">{p.name}</span>
+                {#if p.default}
+                  <span class="badge default">default</span>
+                {/if}
+                <span class="provider-meta">{p.base_url}</span>
+              </div>
+              {#if p.models.length > 0}
+                <div class="models">
+                  {#each p.models as m (m)}
+                    <span class="model" class:default-model={m === p.default_model}>
+                      {m}
+                      {#if m === p.default_model}•{/if}
+                    </span>
+                  {/each}
+                </div>
+              {:else}
+                <div class="provider-meta">No models configured</div>
+              {/if}
+            </div>
+            <div class="provider-actions">
+              {#if !p.default}
+                <button class="ghost" onclick={() => void makeDefault(p)}>Make default</button>
+              {/if}
+              <button class="ghost" onclick={() => startEdit(p)}>Edit</button>
+              <button class="delete" onclick={() => void remove(p)}>Delete</button>
+            </div>
+          </div>
+        {/each}
+      </div>
     {/if}
   </div>
 </div>
@@ -166,12 +275,6 @@
 
   h2 {
     font-size: 15px;
-    margin: 0;
-  }
-
-  .hint {
-    color: var(--text-dim);
-    font-size: 13px;
     margin: 0;
   }
 
@@ -211,6 +314,7 @@
   .actions {
     display: flex;
     justify-content: flex-end;
+    gap: 10px;
   }
 
   button.primary {
@@ -225,6 +329,114 @@
   button.primary:disabled {
     opacity: 0.5;
     cursor: default;
+  }
+
+  button.ghost {
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    padding: 6px 12px;
+    font-size: 13px;
+  }
+
+  button.ghost:hover {
+    border-color: var(--accent);
+  }
+
+  .list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .provider {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    background: var(--bg-raised);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 12px 14px;
+  }
+
+  .provider-main {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .provider-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+
+  .provider-name {
+    font-weight: 600;
+  }
+
+  .badge {
+    font-size: 12px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+  }
+
+  .badge.default {
+    color: var(--accent);
+    border-color: var(--accent);
+  }
+
+  .provider-meta {
+    font-size: 12px;
+    color: var(--text-dim);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .models {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+
+  .model {
+    font-size: 12px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+  }
+
+  .model.default-model {
+    color: var(--accent);
+    border-color: var(--accent);
+  }
+
+  .provider-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+
+  button.delete {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--bg-input);
+    color: var(--danger);
+    padding: 6px 12px;
+    font-size: 13px;
+  }
+
+  button.delete:hover {
+    border-color: var(--danger);
   }
 
   .error {

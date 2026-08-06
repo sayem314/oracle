@@ -38,8 +38,11 @@ func New(deps Deps) *fiber.App {
 	api.Patch("/jobs/:id", newUpdateJobHandler(deps))
 	api.Delete("/jobs/:id", newDeleteJobHandler(deps))
 
-	api.Get("/settings", newGetSettingsHandler(deps))
-	api.Put("/settings", newUpdateSettingsHandler(deps))
+	providers := api.Group("/llm/providers")
+	providers.Get("", newListLLMProvidersHandler(deps))
+	providers.Post("", newCreateLLMProviderHandler(deps))
+	providers.Patch("/:id", newUpdateLLMProviderHandler(deps))
+	providers.Delete("/:id", newDeleteLLMProviderHandler(deps))
 
 	api.Get("/sessions", newListSessionsHandler(deps))
 	api.Get("/sessions/:id/messages", newListMessagesHandler(deps))

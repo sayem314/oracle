@@ -34,19 +34,6 @@ async function postJSON(path: string, payload: unknown): Promise<Response> {
   return res;
 }
 
-async function putJSON(path: string, payload: unknown): Promise<Response> {
-  const res = await fetch(path, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-    credentials: "include",
-  });
-  if (!res.ok) {
-    throw new Error(await parseError(res));
-  }
-  return res;
-}
-
 async function patchJSON(path: string, payload: unknown): Promise<Response> {
   const res = await fetch(path, {
     method: "PATCH",
@@ -128,6 +115,7 @@ export interface ChatOptions {
   sessionId: number | null;
   message: string;
   model?: string;
+  providerId?: number;
   signal?: AbortSignal;
 }
 
@@ -137,7 +125,12 @@ export async function streamChat(opts: ChatOptions, cb: ChatStreamCallbacks): Pr
   const res = await fetch("/api/v1/chat", {
     method: "POST",
     headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
-    body: JSON.stringify({ session_id: opts.sessionId, message: opts.message, model: opts.model }),
+    body: JSON.stringify({
+      session_id: opts.sessionId,
+      message: opts.message,
+      model: opts.model,
+      provider_id: opts.providerId,
+    }),
     credentials: "include",
     signal: opts.signal,
   });
@@ -310,28 +303,44 @@ export async function deleteSession(id: number): Promise<void> {
   await deleteRequest(`/api/v1/sessions/${id}`);
 }
 
-export interface LLMSettings {
+export interface LLMProvider {
+  id: number;
+  name: string;
   provider: string;
   base_url: string;
-  model: string;
   has_api_key: boolean;
+  models: string[];
+  default_model: string;
+  default: boolean;
 }
 
-export interface LLMSaveInput {
+export interface LLMProviderInput {
+  name: string;
   provider: string;
   base_url: string;
-  api_key: string;
-  model: string;
+  api_key?: string;
+  models: string[];
+  default_model?: string;
+  default?: boolean;
 }
 
-export async function getSettings(): Promise<LLMSettings> {
-  const res = await getRequest("/api/v1/settings");
-  return (await res.json()) as LLMSettings;
+export async function listLLMProviders(): Promise<LLMProvider[]> {
+  const res = await getRequest("/api/v1/llm/providers");
+  return (await res.json()) as LLMProvider[];
 }
 
-export async function saveSettings(input: LLMSaveInput): Promise<LLMSettings> {
-  const res = await putJSON("/api/v1/settings", input);
-  return (await res.json()) as LLMSettings;
+export async function createLLMProvider(input: LLMProviderInput): Promise<LLMProvider> {
+  const res = await postJSON("/api/v1/llm/providers", input);
+  return (await res.json()) as LLMProvider;
+}
+
+export async function updateLLMProvider(id: number, input: LLMProviderInput): Promise<LLMProvider> {
+  const res = await patchJSON(`/api/v1/llm/providers/${id}`, input);
+  return (await res.json()) as LLMProvider;
+}
+
+export async function deleteLLMProvider(id: number): Promise<void> {
+  await deleteRequest(`/api/v1/llm/providers/${id}`);
 }
 
 export interface AdminUser {
