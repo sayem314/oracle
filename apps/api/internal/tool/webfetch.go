@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/cookiejar"
 	"net/netip"
 	"net/url"
 	"strings"
@@ -106,8 +107,10 @@ func ssrfDialContext(ctx context.Context, network, addr string) (net.Conn, error
 	return nil, lastErr
 }
 
-// ssrfClient is the transport web_fetch uses in production. Proxying is
-// disabled so the caller's network cannot be used to hop around the guard.
+// ssrfClient is the transport web_fetch and web_search use in production.
+// Proxying is disabled so the caller's network cannot be used to hop around
+// the guard. The cookie jar persists DDG's ax session cookie between the
+// seed GET and the search POST.
 func ssrfClient() *http.Client {
 	return &http.Client{
 		Timeout: fetchTimeout,
@@ -115,6 +118,10 @@ func ssrfClient() *http.Client {
 			DialContext: ssrfDialContext,
 			Proxy:       nil,
 		},
+		Jar: func() http.CookieJar {
+			jar, _ := cookiejar.New(nil)
+			return jar
+		}(),
 	}
 }
 

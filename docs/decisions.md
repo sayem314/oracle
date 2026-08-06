@@ -2,6 +2,12 @@
 
 Lightweight ADRs. Latest first.
 
+## 2026-08-06: web_search builtin tool (keyless DuckDuckGo)
+
+- web_fetch alone forced the model to guess URLs, so the toolbox gains `web_search`, which POSTs a query to DuckDuckGo's budget html endpoint and returns the top five titles, URLs, and snippets. No API key: the endpoint is the keyless, ToS-covered form scrape that DDG serves to anonymous browsers.
+- Bot walls are the fragile part, and three choices reduce the odds without hard-coding hacks. First, a browser User-Agent (DDG rejects the Go default). Second, a seed GET to the endpoint before the POST so the `ax` cookie is present (which is why the shared `ssrfClient` now carries a cookie jar — this is the only reason it does). Third, the redirect targets come back as base64 `uddg` relay URLs, which are decoded back to the real address so the model sees where a result points instead of a `duckduckgo.com/l` redirect.
+- Parsing uses the same `x/net/html` tokenizer as web_fetch (no new deps), and the endpoint is injectable the same way the fetch client is: production hits the real DDG, tests serve canned result pages. If DDG changes markup or starts walling requests, the tool degrades to "No results found." rather than erroring the turn — a search returning nothing is a normal outcome, and the model can react to it.
+
 ## 2026-08-06: web_fetch builtin tool with SSRF guard
 
 - The toolbox had exactly one tool (get_time), fine for the mock but thin for a real gateway. `web_fetch` does an HTTP GET and returns the body as text (HTML stripped, capped at 512 KiB, client timeout 15 s). Binary or unsupported content types are refused rather than dumped at the model.

@@ -13,6 +13,7 @@ func NewBuiltin() []Tool {
 	return []Tool{
 		getTimeTool(),
 		webFetchTool(ssrfClient()),
+		webSearchTool(ssrfClient()),
 	}
 }
 
