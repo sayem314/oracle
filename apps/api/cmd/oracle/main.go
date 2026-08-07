@@ -87,6 +87,7 @@ func main() {
 		LLM:         &chat.LLMResolver{Store: st, Default: provider},
 		Tools:       tools,
 		Permissions: ruleset,
+		Environment: chat.DetectEnvironment(),
 		Compaction: chat.CompactionConfig{
 			ContextWindow:    cfg.ContextWindow,
 			ReserveTokens:    cfg.ContextReserve,

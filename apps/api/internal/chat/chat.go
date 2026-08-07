@@ -109,7 +109,10 @@ type Engine struct {
 	// Compaction controls context condensation and tool-output truncation when
 	// the assembled history grows large. The zero value disables both.
 	Compaction CompactionConfig
-	Headless   bool
+	// Environment is the rendered OS/cwd/timezone block appended to the
+	// system prompt, from DetectEnvironment.
+	Environment string
+	Headless    bool
 }
 
 // AsHeadless returns a copy for unattended runs, where ask verdicts become
@@ -123,6 +126,7 @@ func (e *Engine) AsHeadless() *Engine {
 		Tools:       e.Tools,
 		Compaction:  e.Compaction,
 		Permissions: e.Permissions,
+		Environment: e.Environment,
 		Headless:    true,
 	}
 	c.rules.Store(ref)
@@ -170,7 +174,7 @@ func (e *Engine) Run(ctx context.Context, sink Sink, sessionID int64, req llm.Re
 		return err
 	}
 	if req.System == "" {
-		req.System = buildSystemPrompt(ctx, e.Store)
+		req.System = buildSystemPrompt(ctx, e.Store, e.Environment)
 	}
 	rules := e.currentPermissions()
 	tools := e.Tools.Definitions()

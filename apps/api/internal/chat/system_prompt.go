@@ -2,7 +2,11 @@ package chat
 
 import (
 	"context"
+	"fmt"
+	"os"
+	"runtime"
 	"strings"
+	"time"
 
 	"github.com/sayem314/oracle/apps/api/internal/store"
 )
@@ -15,19 +19,48 @@ Behavior:
 - When a tool fails or is denied by policy, say so plainly and suggest an alternative when one exists.
 - Never claim work you did not do or results you did not observe.`
 
-// buildSystemPrompt composes the system prompt from the base text plus the
-// administrator-configured instructions stored in settings, when present.
-func buildSystemPrompt(ctx context.Context, st store.Store) string {
+// DetectEnvironment renders the runtime facts the model needs to anchor
+// relative paths and answer where-am-I questions. Process-static, built once.
+func DetectEnvironment() string {
+	cwd, err := os.Getwd()
+	if err != nil {
+		cwd = "(unavailable)"
+	}
+	return fmt.Sprintf("Environment:\n- OS: %s/%s\n- Working directory: %s\n- Timezone: %s\n\nRelative paths in the file and exec tools resolve against the working directory.",
+		runtime.GOOS, runtime.GOARCH, cwd, currentTimezone())
+}
+
+func currentTimezone() string {
+	zone, offset := time.Now().Zone()
+	if offset == 0 {
+		return zone
+	}
+	sign := "+"
+	if offset < 0 {
+		sign = "-"
+		offset = -offset
+	}
+	return fmt.Sprintf("%s (UTC%s%02d:%02d)", zone, sign, offset/3600, offset%3600/60)
+}
+
+// buildSystemPrompt composes the system prompt from the base text, the
+// environment block, and the administrator-configured instructions stored in
+// settings, when present.
+func buildSystemPrompt(ctx context.Context, st store.Store, env string) string {
+	prompt := baseSystemPrompt
+	if env != "" {
+		prompt += "\n\n" + env
+	}
 	if st == nil {
-		return baseSystemPrompt
+		return prompt
 	}
 	settings, err := st.GetSettings(ctx)
 	if err != nil {
-		return baseSystemPrompt
+		return prompt
 	}
 	instructions := strings.TrimSpace(settings.Instructions)
 	if instructions == "" {
-		return baseSystemPrompt
+		return prompt
 	}
-	return baseSystemPrompt + "\n\nAdministrator instructions:\n" + instructions
+	return prompt + "\n\nAdministrator instructions:\n" + instructions
 }
