@@ -27,12 +27,13 @@ func New() []tool.Tool {
 }
 
 func execTool() tool.Tool {
-	schema := json.RawMessage(`{"type":"object","properties":{"command":{"type":"string"},"timeout_seconds":{"type":"integer","minimum":1,"maximum":300}},"required":["command"],"additionalProperties":false}`)
+	schema := json.RawMessage(`{"type":"object","properties":{"command":{"type":"string"},"timeout_seconds":{"type":"integer","minimum":1,"maximum":300},"cwd":{"type":"string","description":"Directory the command runs in (default: the process working directory)"}},"required":["command"],"additionalProperties":false}`)
 	return tool.Tool{
 		Definition: llm.Tool{
 			Name: "exec",
 			Description: "Run a shell command and return its combined output. command is executed " +
-				"via sh -c in oracle's own working directory and environment, so pipes, redirects, " +
+				"via sh -c in the optional cwd or oracle's own working directory and environment, " +
+				"so pipes, redirects, " +
 				"and expansions work. A non-zero exit code is reported in the result, not as an " +
 				"error. timeout_seconds is optional, defaults to 30, max 300. Output beyond 512 KiB " +
 				"is truncated with a notice.",
@@ -46,6 +47,7 @@ func execute(ctx context.Context, args json.RawMessage) (string, error) {
 	var in struct {
 		Command        string `json:"command"`
 		TimeoutSeconds int    `json:"timeout_seconds"`
+		Cwd            string `json:"cwd"`
 	}
 	if err := json.Unmarshal(args, &in); err != nil {
 		return "", fmt.Errorf("exec: %w", err)
@@ -66,6 +68,9 @@ func execute(ctx context.Context, args json.RawMessage) (string, error) {
 	defer cancel()
 
 	cmd := osexec.CommandContext(runCtx, "sh", "-c", in.Command) //nolint:gosec // running user-approved commands is the tool's purpose
+	if in.Cwd != "" {
+		cmd.Dir = in.Cwd
+	}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	// CommandContext kills only the direct process, so override Cancel to take
 	// down the whole process group when the run context ends.

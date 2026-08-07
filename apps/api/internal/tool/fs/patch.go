@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/bluekeyes/go-gitdiff/gitdiff"
@@ -17,11 +16,12 @@ import (
 )
 
 func filePatchTool() tool.Tool {
-	schema := json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"},"diff":{"type":"string"}},"required":["path","diff"],"additionalProperties":false}`)
+	schema := json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"},"diff":{"type":"string"},"cwd":{"type":"string","description":"Base directory for resolving a relative path (default: the process working directory)"}},"required":["path","diff"],"additionalProperties":false}`)
 	return tool.Tool{
 		Definition: llm.Tool{
 			Name: "file_patch",
-			Description: "Apply a unified diff to a local text file. path is the file to edit, diff is a " +
+			Description: "Apply a unified diff to a local text file. path is the file to edit, " +
+				"resolved against the optional cwd when relative, diff is a " +
 				"git-style patch with @@ hunks against the file's current content, e.g. produced by " +
 				"git diff. Read the file first so hunk line numbers and context match exactly. One " +
 				"file per patch; diffs that create or delete files are rejected. Diffs larger than " +
@@ -38,6 +38,7 @@ func executePatch(_ context.Context, args json.RawMessage) (string, error) {
 	var in struct {
 		Path string `json:"path"`
 		Diff string `json:"diff"`
+		Cwd  string `json:"cwd"`
 	}
 	if err := json.Unmarshal(args, &in); err != nil {
 		return "", fmt.Errorf("file_patch: %w", err)
@@ -73,8 +74,8 @@ func executePatch(_ context.Context, args json.RawMessage) (string, error) {
 		return "", errors.New("file_patch: diff contains no changes")
 	}
 
-	target := filepath.Clean(in.Path)
-	src, err := os.Open(target)
+	target := resolvePath(in.Cwd, in.Path)
+	src, err := os.Open(target) //nolint:gosec // opening user-specified files is the tool's purpose
 	if err != nil {
 		return "", fmt.Errorf("file_patch: %w", err)
 	}

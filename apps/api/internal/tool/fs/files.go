@@ -32,13 +32,24 @@ const (
 	lineTruncSuffix  = "... (line truncated to 2000 chars)"
 )
 
+// resolvePath anchors a tool path against an optional cwd. Absolute paths win;
+// an empty cwd leaves the path relative to the process working directory.
+func resolvePath(cwd, path string) string {
+	p := filepath.Clean(path)
+	if !filepath.IsAbs(p) && strings.TrimSpace(cwd) != "" {
+		p = filepath.Join(filepath.Clean(cwd), p)
+	}
+	return p
+}
+
 func fileReadTool() tool.Tool {
-	schema := json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"},"offset":{"type":"integer","minimum":0,"description":"The line number to start reading from (1-indexed)"},"limit":{"type":"integer","minimum":0,"description":"The maximum number of lines to read (defaults to 2000)"}},"required":["path"],"additionalProperties":false}`)
+	schema := json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"},"offset":{"type":"integer","minimum":0,"description":"The line number to start reading from (1-indexed)"},"limit":{"type":"integer","minimum":0,"description":"The maximum number of lines to read (defaults to 2000)"},"cwd":{"type":"string","description":"Base directory for resolving a relative path (default: the process working directory)"}},"required":["path"],"additionalProperties":false}`)
 	return tool.Tool{
 		Definition: llm.Tool{
 			Name: "file_read",
 			Description: "Read a local text file and return its contents as numbered lines. path is an " +
-				"absolute or relative filesystem path. offset is the 1-indexed line to start from " +
+				"absolute or relative filesystem path, resolved against the optional cwd when " +
+				"relative. offset is the 1-indexed line to start from " +
 				"(default 1) and limit is the maximum number of lines to read (default 2000). Each " +
 				"line is prefixed with its line number so file_patch hunks can be targeted " +
 				"precisely. Output is capped at 50 KB and lines longer than 2000 chars are " +
@@ -51,6 +62,7 @@ func fileReadTool() tool.Tool {
 				Path   string `json:"path"`
 				Offset int    `json:"offset"`
 				Limit  int    `json:"limit"`
+				Cwd    string `json:"cwd"`
 			}
 			if err := json.Unmarshal(args, &in); err != nil {
 				return "", fmt.Errorf("file_read: %w", err)
@@ -66,7 +78,7 @@ func fileReadTool() tool.Tool {
 			if limit <= 0 {
 				limit = defaultReadLimit
 			}
-			f, err := os.Open(filepath.Clean(in.Path))
+			f, err := os.Open(resolvePath(in.Cwd, in.Path))
 			if err != nil {
 				return "", fmt.Errorf("file_read: %w", err)
 			}
@@ -143,12 +155,13 @@ func fileReadTool() tool.Tool {
 }
 
 func fileWriteTool() tool.Tool {
-	schema := json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"],"additionalProperties":false}`)
+	schema := json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"},"cwd":{"type":"string","description":"Base directory for resolving a relative path (default: the process working directory)"}},"required":["path","content"],"additionalProperties":false}`)
 	return tool.Tool{
 		Definition: llm.Tool{
 			Name: "file_write",
 			Description: "Write content to a local file, creating it if it does not exist and " +
-				"overwriting it if it does. path is an absolute or relative filesystem path. " +
+				"overwriting it if it does. path is an absolute or relative filesystem path, " +
+				"resolved against the optional cwd when relative. " +
 				"content is the full text to write. Parent directories are created as needed.",
 			Parameters: schema,
 		},
@@ -156,6 +169,7 @@ func fileWriteTool() tool.Tool {
 			var in struct {
 				Path    string `json:"path"`
 				Content string `json:"content"`
+				Cwd     string `json:"cwd"`
 			}
 			if err := json.Unmarshal(args, &in); err != nil {
 				return "", fmt.Errorf("file_write: %w", err)
@@ -163,10 +177,11 @@ func fileWriteTool() tool.Tool {
 			if strings.TrimSpace(in.Path) == "" {
 				return "", errors.New("file_write: path is required")
 			}
-			if err := os.MkdirAll(filepath.Dir(filepath.Clean(in.Path)), 0o700); err != nil {
+			target := resolvePath(in.Cwd, in.Path)
+			if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
 				return "", fmt.Errorf("file_write: %w", err)
 			}
-			if err := os.WriteFile(filepath.Clean(in.Path), []byte(in.Content), 0o600); err != nil {
+			if err := os.WriteFile(target, []byte(in.Content), 0o600); err != nil {
 				return "", fmt.Errorf("file_write: %w", err)
 			}
 			return "wrote " + in.Path, nil
@@ -175,12 +190,13 @@ func fileWriteTool() tool.Tool {
 }
 
 func fileListTool() tool.Tool {
-	schema := json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"},"offset":{"type":"integer","minimum":0,"description":"The entry number to start from (1-indexed)"},"limit":{"type":"integer","minimum":0,"description":"The maximum number of entries to list (defaults to 2000)"},"hidden":{"type":"boolean","description":"Include hidden files (default false)"},"ignore":{"type":"boolean","description":"Apply .gitignore rules (default true)"}},"required":["path"],"additionalProperties":false}`)
+	schema := json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"},"offset":{"type":"integer","minimum":0,"description":"The entry number to start from (1-indexed)"},"limit":{"type":"integer","minimum":0,"description":"The maximum number of entries to list (defaults to 2000)"},"hidden":{"type":"boolean","description":"Include hidden files (default false)"},"ignore":{"type":"boolean","description":"Apply .gitignore rules (default true)"},"cwd":{"type":"string","description":"Base directory for resolving a relative path (default: the process working directory)"}},"required":["path"],"additionalProperties":false}`)
 	return tool.Tool{
 		Definition: llm.Tool{
 			Name: "file_list",
 			Description: "List the entries in a directory, one per line with a trailing slash on " +
-				"subdirectories. path is an absolute or relative directory path. offset is the " +
+				"subdirectories. path is an absolute or relative directory path, resolved " +
+				"against the optional cwd when relative. offset is the " +
 				"1-indexed entry to start from (default 1) and limit is the maximum number of " +
 				"entries (default 2000), so large directories can be paged by passing offset. " +
 				"offset and limit apply to the filtered list. Hidden files are omitted by default " +
@@ -197,6 +213,7 @@ func fileListTool() tool.Tool {
 				Limit  int    `json:"limit"`
 				Hidden bool   `json:"hidden"`
 				Ignore *bool  `json:"ignore"`
+				Cwd    string `json:"cwd"`
 			}
 			if err := json.Unmarshal(args, &in); err != nil {
 				return "", fmt.Errorf("file_list: %w", err)
@@ -213,7 +230,7 @@ func fileListTool() tool.Tool {
 				limit = defaultReadLimit
 			}
 			ignore := in.Ignore == nil || *in.Ignore
-			listDir := filepath.Clean(in.Path)
+			listDir := resolvePath(in.Cwd, in.Path)
 			listDirAbs, err := filepath.Abs(listDir)
 			if err != nil {
 				listDirAbs = listDir
@@ -266,17 +283,19 @@ func fileListTool() tool.Tool {
 }
 
 func fileDeleteTool() tool.Tool {
-	schema := json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"}},"required":["path"],"additionalProperties":false}`)
+	schema := json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"},"cwd":{"type":"string","description":"Base directory for resolving a relative path (default: the process working directory)"}},"required":["path"],"additionalProperties":false}`)
 	return tool.Tool{
 		Definition: llm.Tool{
 			Name: "file_delete",
 			Description: "Delete a local file or empty directory. path is an absolute or relative " +
-				"filesystem path. Returns an error if the entry does not exist.",
+				"filesystem path, resolved against the optional cwd when relative. " +
+				"Returns an error if the entry does not exist.",
 			Parameters: schema,
 		},
 		Execute: func(_ context.Context, args json.RawMessage) (string, error) {
 			var in struct {
 				Path string `json:"path"`
+				Cwd  string `json:"cwd"`
 			}
 			if err := json.Unmarshal(args, &in); err != nil {
 				return "", fmt.Errorf("file_delete: %w", err)
@@ -284,7 +303,7 @@ func fileDeleteTool() tool.Tool {
 			if strings.TrimSpace(in.Path) == "" {
 				return "", errors.New("file_delete: path is required")
 			}
-			if err := os.Remove(filepath.Clean(in.Path)); err != nil {
+			if err := os.Remove(resolvePath(in.Cwd, in.Path)); err != nil {
 				return "", fmt.Errorf("file_delete: %w", err)
 			}
 			return "deleted " + in.Path, nil

@@ -137,6 +137,22 @@ func TestFilePatchRequiresPath(t *testing.T) {
 	require.ErrorContains(t, err, "path is required")
 }
 
+func TestFilePatchCwd(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "notes.txt")
+	require.NoError(t, os.WriteFile(p, []byte("old line\n"), 0o644)) //nolint:gosec // test fixture
+
+	_, err := filePatchTool().Execute(context.Background(), mustArgs(`{
+		"path":"notes.txt",
+		"cwd":"`+dir+`",
+		"diff":"--- a/notes.txt\n+++ b/notes.txt\n@@ -1 +1 @@\n-old line\n+new line\n"
+	}`))
+	require.NoError(t, err)
+
+	data, _ := os.ReadFile(p) //nolint:gosec // test fixture
+	assert.Equal(t, "new line\n", string(data))
+}
+
 func TestFilePatchNoChanges(t *testing.T) {
 	p := writeFixture(t, "content\n")
 

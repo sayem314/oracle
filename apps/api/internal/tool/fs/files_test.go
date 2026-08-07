@@ -249,3 +249,51 @@ func TestFileToolsRequirePath(t *testing.T) {
 	_, err = fileDeleteTool().Execute(context.Background(), mustArgs(`{"path":""}`))
 	require.ErrorContains(t, err, "path is required")
 }
+
+func TestFileReadCwd(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "f.txt")
+	require.NoError(t, os.WriteFile(p, []byte("hello"), 0o644)) //nolint:gosec // test fixture
+
+	got, err := fileReadTool().Execute(context.Background(), mustArgs(`{"path":"f.txt","cwd":"`+dir+`"}`))
+	require.NoError(t, err)
+	assert.Equal(t, "1: hello\n\n(End of file - total 1 lines)", got)
+
+	got, err = fileReadTool().Execute(context.Background(), mustArgs(`{"path":"`+p+`","cwd":"/other"}`))
+	require.NoError(t, err)
+	assert.Equal(t, "1: hello\n\n(End of file - total 1 lines)", got)
+}
+
+func TestFileWriteCwd(t *testing.T) {
+	dir := t.TempDir()
+
+	_, err := fileWriteTool().Execute(context.Background(),
+		mustArgs(`{"path":"sub/note.txt","content":"hi","cwd":"`+dir+`"}`))
+	require.NoError(t, err)
+
+	data, err := os.ReadFile(filepath.Join(dir, "sub", "note.txt")) //nolint:gosec // test fixture
+	require.NoError(t, err)
+	assert.Equal(t, "hi", string(data))
+}
+
+func TestFileListCwd(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "sub"), 0o755))                        //nolint:gosec // test fixture
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "sub", "a.txt"), []byte("a"), 0o644)) //nolint:gosec // test fixture
+
+	got, err := fileListTool().Execute(context.Background(), mustArgs(`{"path":"sub","cwd":"`+dir+`","ignore":false}`))
+	require.NoError(t, err)
+	assert.Equal(t, "a.txt\n\n(1 entries)", got)
+}
+
+func TestFileDeleteCwd(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "del.txt")
+	require.NoError(t, os.WriteFile(p, []byte("x"), 0o644)) //nolint:gosec // test fixture
+
+	_, err := fileDeleteTool().Execute(context.Background(), mustArgs(`{"path":"del.txt","cwd":"`+dir+`"}`))
+	require.NoError(t, err)
+
+	_, err = os.Stat(p)
+	assert.True(t, os.IsNotExist(err))
+}

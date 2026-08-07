@@ -3,6 +3,7 @@ package exec
 import (
 	"context"
 	"encoding/json"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -87,6 +88,16 @@ func TestExecRequiresCommand(t *testing.T) {
 func TestExecRejectsInvalidJSON(t *testing.T) {
 	_, err := execTool().Execute(context.Background(), json.RawMessage(`{nope`))
 	require.ErrorContains(t, err, "exec:")
+}
+
+func TestExecCwd(t *testing.T) {
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+
+	out, err := execTool().Execute(context.Background(),
+		mustArgs(`{"command":"pwd","cwd":"`+dir+`"}`))
+	require.NoError(t, err)
+	assert.Equal(t, dir, out)
 }
 
 func TestExecCancellationKillsProcessGroup(t *testing.T) {
