@@ -4,6 +4,7 @@ go 1.26.5
 
 require (
 	github.com/PuerkitoBio/goquery v1.12.0
+	github.com/bluekeyes/go-gitdiff v0.9.0
 	github.com/gofiber/fiber/v3 v3.4.0
 	github.com/knadh/koanf/parsers/dotenv v1.1.1
 	github.com/knadh/koanf/providers/confmap v1.0.0

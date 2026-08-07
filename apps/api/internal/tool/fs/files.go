@@ -20,6 +20,7 @@ func New() []tool.Tool {
 		fileWriteTool(),
 		fileListTool(),
 		fileDeleteTool(),
+		filePatchTool(),
 	}
 }
 
