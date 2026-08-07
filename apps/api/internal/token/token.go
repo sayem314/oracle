@@ -1,8 +1,6 @@
 package token
 
 import (
-	"encoding/json"
-
 	"github.com/sayem314/oracle/apps/api/internal/llm"
 )
 
@@ -29,10 +27,4 @@ func EstimateMessages(msgs []llm.Message) int {
 		}
 	}
 	return total
-}
-
-// EstimateJSON returns an approximate token count for a serialized value.
-func EstimateJSON(v any) int {
-	b, _ := json.Marshal(v)
-	return Estimate(string(b))
 }

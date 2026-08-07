@@ -21,10 +21,10 @@ func (f fixedResolver) Resolve(ctx context.Context, model string) (llm.Provider,
 	return f.p, nil
 }
 
-// TestRunCompactsAndPersistsSummary drives Engine.Run with a compaction config
-// small enough that the assembled history overflows, and verifies the summary
-// is written to the session row.
-func TestRunCompactsAndPersistsSummary(t *testing.T) {
+// TestRunCompactsLongHistory drives Engine.Run with a compaction config small
+// enough that the assembled history overflows, and verifies the run completes
+// and the reply is persisted.
+func TestRunCompactsLongHistory(t *testing.T) {
 	s, _ := newStore(t)
 
 	session, err := s.CreateSession(t.Context(), "")
@@ -63,9 +63,9 @@ func TestRunCompactsAndPersistsSummary(t *testing.T) {
 		llm.Request{Messages: history})
 	require.NoError(t, err)
 
-	got, err := s.GetSession(t.Context(), session.ID)
+	msgs, err := s.ListMessages(t.Context(), db.ListMessagesParams{SessionID: session.ID, Limit: 5})
 	require.NoError(t, err)
-	assert.NotEmpty(t, got.Summary)
+	assert.Equal(t, "This is a mock response from oracle.", msgs[len(msgs)-1].Content)
 }
 
 func manyX(n int) string {

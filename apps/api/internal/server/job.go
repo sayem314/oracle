@@ -110,10 +110,7 @@ func newCreateJobHandler(deps Deps) fiber.Handler {
 			sessionID = sql.NullInt64{Int64: session.ID, Valid: true}
 		}
 
-		next, err := scheduler.NextAfter(schedule, time.Now())
-		if err != nil {
-			return err
-		}
+		next, _ := scheduler.NextAfter(schedule, time.Now())
 
 		job, err := deps.Store.CreateJob(ctx, db.CreateJobParams{
 			SessionID: sessionID,
@@ -190,10 +187,7 @@ func newUpdateJobHandler(deps Deps) fiber.Handler {
 		var next sql.NullTime
 		if enabled {
 			enabledInt = 1
-			t, err := scheduler.NextAfter(schedule, time.Now())
-			if err != nil {
-				return err
-			}
+			t, _ := scheduler.NextAfter(schedule, time.Now())
 			next = sql.NullTime{Time: t, Valid: true}
 		}
 

@@ -173,17 +173,9 @@ func (e *Engine) Run(ctx context.Context, sink Sink, sessionID int64, req llm.Re
 	tools := e.Tools.Definitions()
 
 	if e.Compaction.Enabled() {
-		built, summary, compacted := e.compactHistory(ctx, e.Compaction, req.Messages, e.summarizer(provider, req.Model))
+		built, _, compacted := e.compactHistory(ctx, e.Compaction, req.Messages, e.summarizer(provider, req.Model))
 		if compacted {
 			req.Messages = built
-			if summary != "" {
-				if err := e.Store.UpdateSessionSummary(ctx, db.UpdateSessionSummaryParams{
-					ID:      sessionID,
-					Summary: summary,
-				}); err != nil {
-					return fmt.Errorf("persist session summary: %w", err)
-				}
-			}
 		}
 	}
 

@@ -415,14 +415,3 @@ export async function updateSettings(input: SettingsInput): Promise<Settings> {
   const res = await putJSON("/api/v1/settings", input);
   return (await res.json()) as Settings;
 }
-
-export interface Profile {
-  email: string;
-  role: string;
-  is_admin: boolean;
-}
-
-export async function getProfile(): Promise<Profile> {
-  const res = await getRequest("/api/v1/profile");
-  return (await res.json()) as Profile;
-}

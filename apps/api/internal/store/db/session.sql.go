@@ -109,23 +109,6 @@ func (q *Queries) TouchSession(ctx context.Context, id int64) error {
 	return err
 }
 
-const updateSessionSummary = `-- name: UpdateSessionSummary :exec
-UPDATE sessions
-SET summary = ?,
-	updated_at = CURRENT_TIMESTAMP
-WHERE id = ?
-`
-
-type UpdateSessionSummaryParams struct {
-	Summary string
-	ID      int64
-}
-
-func (q *Queries) UpdateSessionSummary(ctx context.Context, arg UpdateSessionSummaryParams) error {
-	_, err := q.db.ExecContext(ctx, updateSessionSummary, arg.Summary, arg.ID)
-	return err
-}
-
 const updateSessionTitle = `-- name: UpdateSessionTitle :exec
 UPDATE sessions
 SET title = ?

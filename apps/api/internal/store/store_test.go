@@ -69,21 +69,6 @@ func TestSessionLifecycle(t *testing.T) {
 	assert.ErrorIs(t, err, sql.ErrNoRows)
 }
 
-func TestSessionSummaryRoundTrip(t *testing.T) {
-	s, _ := openStore(t)
-	ctx := t.Context()
-	session := newSession(t, s, "")
-
-	require.NoError(t, s.UpdateSessionSummary(ctx, db.UpdateSessionSummaryParams{
-		ID:      session.ID,
-		Summary: "a condensed recap",
-	}))
-
-	got, err := s.GetSession(ctx, session.ID)
-	require.NoError(t, err)
-	assert.Equal(t, "a condensed recap", got.Summary)
-}
-
 func TestMessageLifecycle(t *testing.T) {
 	s, _ := openStore(t)
 	ctx := t.Context()

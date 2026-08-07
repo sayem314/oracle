@@ -33,15 +33,6 @@ type UserInfo struct {
 	CreatedAt time.Time
 }
 
-// Error is an auth failure that carries the HTTP status it maps to, keeping
-// Limen's error types behind the interface.
-type Error struct {
-	Status  int
-	Message string
-}
-
-func (e *Error) Error() string { return e.Message }
-
 // Auth is the seam oracle depends on. Limen is the only implementation for
 // now, but keeping it behind an interface lets tests swap in fakes.
 type Auth interface {

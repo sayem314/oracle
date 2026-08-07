@@ -33,20 +33,6 @@ func NewRuleset(defaultVerdict Verdict, rules []Rule) *Ruleset {
 	return &Ruleset{rules: rules, Default: defaultVerdict}
 }
 
-// WithUserOverrides returns a copy that appends per-user rules after the base
-// ones and, when overrideDefault is set, replaces the fallback verdict.
-// Appending preserves the base semantics: deny stays absolute across both
-// lists, and later (per-user) non-deny rules beat earlier base ones.
-func (rs *Ruleset) WithUserOverrides(overrideDefault bool, defaultVerdict Verdict, rules []Rule) *Ruleset {
-	out := &Ruleset{rules: make([]Rule, 0, len(rs.rules)+len(rules)), Default: rs.Default}
-	out.rules = append(out.rules, rs.rules...)
-	out.rules = append(out.rules, rules...)
-	if overrideDefault {
-		out.Default = defaultVerdict
-	}
-	return out
-}
-
 func (rs *Ruleset) Evaluate(toolName string) Verdict {
 	for _, rule := range rs.rules {
 		if rule.Verdict == Deny && matches(rule.Tool, toolName) {

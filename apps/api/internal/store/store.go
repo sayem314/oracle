@@ -15,7 +15,6 @@ type Store interface {
 	GetSession(ctx context.Context, id int64) (db.Session, error)
 	ListSessions(ctx context.Context, arg db.ListSessionsParams) ([]db.Session, error)
 	UpdateSessionTitle(ctx context.Context, arg db.UpdateSessionTitleParams) error
-	UpdateSessionSummary(ctx context.Context, arg db.UpdateSessionSummaryParams) error
 	TouchSession(ctx context.Context, id int64) error
 	DeleteSession(ctx context.Context, id int64) error
 

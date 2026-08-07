@@ -143,7 +143,7 @@
               </div>
             </div>
             <div class="job-actions">
-              <button class="toggle" onclick={() => toggle(job)}>
+              <button onclick={() => toggle(job)}>
                 {job.enabled ? "Disable" : "Enable"}
               </button>
               <button class="delete" onclick={() => remove(job)}>Delete</button>

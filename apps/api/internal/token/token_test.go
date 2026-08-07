@@ -30,8 +30,3 @@ func TestEstimateMessagesGrows(t *testing.T) {
 	})
 	assert.Less(t, one, many)
 }
-
-func TestEstimateJSON(t *testing.T) {
-	n := token.EstimateJSON(map[string]string{"a": "b"})
-	assert.GreaterOrEqual(t, n, 1)
-}
