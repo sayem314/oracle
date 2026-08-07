@@ -1,6 +1,7 @@
 package fs
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -24,21 +25,32 @@ func New() []tool.Tool {
 	}
 }
 
-const maxReadBytes = 512 << 10
+const (
+	maxReadBytes     = 50 << 10
+	maxLineChars     = 2000
+	defaultReadLimit = 2000
+	lineTruncSuffix  = "... (line truncated to 2000 chars)"
+)
 
 func fileReadTool() tool.Tool {
-	schema := json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"}},"required":["path"],"additionalProperties":false}`)
+	schema := json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"},"offset":{"type":"integer","minimum":0,"description":"The line number to start reading from (1-indexed)"},"limit":{"type":"integer","minimum":0,"description":"The maximum number of lines to read (defaults to 2000)"}},"required":["path"],"additionalProperties":false}`)
 	return tool.Tool{
 		Definition: llm.Tool{
 			Name: "file_read",
-			Description: "Read a local text file and return its contents. path is an absolute or " +
-				"relative filesystem path. Files larger than 512 KiB are truncated with a notice. " +
+			Description: "Read a local text file and return its contents as numbered lines. path is an " +
+				"absolute or relative filesystem path. offset is the 1-indexed line to start from " +
+				"(default 1) and limit is the maximum number of lines to read (default 2000). Each " +
+				"line is prefixed with its line number so file_patch hunks can be targeted " +
+				"precisely. Output is capped at 50 KB and lines longer than 2000 chars are " +
+				"truncated. The result names the lines shown and the offset to continue from. " +
 				"Binary files will not decode cleanly.",
 			Parameters: schema,
 		},
 		Execute: func(_ context.Context, args json.RawMessage) (string, error) {
 			var in struct {
-				Path string `json:"path"`
+				Path   string `json:"path"`
+				Offset int    `json:"offset"`
+				Limit  int    `json:"limit"`
 			}
 			if err := json.Unmarshal(args, &in); err != nil {
 				return "", fmt.Errorf("file_read: %w", err)
@@ -46,20 +58,86 @@ func fileReadTool() tool.Tool {
 			if strings.TrimSpace(in.Path) == "" {
 				return "", errors.New("file_read: path is required")
 			}
+			offset := in.Offset
+			if offset <= 0 {
+				offset = 1
+			}
+			limit := in.Limit
+			if limit <= 0 {
+				limit = defaultReadLimit
+			}
 			f, err := os.Open(filepath.Clean(in.Path))
 			if err != nil {
 				return "", fmt.Errorf("file_read: %w", err)
 			}
 			defer f.Close() //nolint:errcheck
 
-			data, err := io.ReadAll(io.LimitReader(f, maxReadBytes+1))
-			if err != nil {
-				return "", fmt.Errorf("file_read: %w", err)
+			r := bufio.NewReader(f)
+			readLine := func() (string, error) {
+				var b strings.Builder
+				for {
+					chunk, isPrefix, err := r.ReadLine()
+					if b.Len() <= maxLineChars {
+						b.Write(chunk)
+					}
+					if err != nil {
+						return b.String(), err
+					}
+					if !isPrefix {
+						return b.String(), nil
+					}
+				}
 			}
-			if len(data) <= maxReadBytes {
-				return string(data), nil
+
+			var (
+				lines []string
+				total int
+				bytes int
+				cut   bool
+				more  bool
+			)
+			for {
+				line, err := readLine()
+				if line == "" && errors.Is(err, io.EOF) {
+					break
+				}
+				if err != nil {
+					return "", fmt.Errorf("file_read: %w", err)
+				}
+				total++
+				if total < offset {
+					continue
+				}
+				if len(lines) >= limit {
+					more = true
+					continue
+				}
+				if len(line) > maxLineChars {
+					line = line[:maxLineChars] + lineTruncSuffix
+				}
+				if bytes+len(line)+1 > maxReadBytes {
+					cut = true
+					more = true
+					break
+				}
+				lines = append(lines, fmt.Sprintf("%d: %s", total, line))
+				bytes += len(line) + 1
 			}
-			return string(data[:maxReadBytes]) + "\n[truncated: file exceeds 512 KiB]", nil
+
+			if offset > 1 && total < offset {
+				return "", fmt.Errorf("file_read: Offset %d is out of range for this file (%d lines)", offset, total)
+			}
+
+			var end string
+			switch {
+			case cut:
+				end = fmt.Sprintf("(Output capped at 50 KB. Showing lines %d-%d. Use offset=%d to continue.)", offset, offset+len(lines)-1, offset+len(lines))
+			case more:
+				end = fmt.Sprintf("(Showing lines %d-%d of %d. Use offset=%d to continue.)", offset, offset+len(lines)-1, total, offset+len(lines))
+			default:
+				end = fmt.Sprintf("(End of file - total %d lines)", total)
+			}
+			return strings.Join(lines, "\n") + "\n\n" + end, nil
 		},
 	}
 }

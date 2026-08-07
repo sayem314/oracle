@@ -19,9 +19,16 @@ func TestFileToolsRegistered(t *testing.T) {
 	for _, tl := range New() {
 		names[tl.Definition.Name] = true
 	}
-	for _, want := range []string{"file_read", "file_write", "file_list", "file_delete"} {
+	for _, want := range []string{"file_read", "file_write", "file_list", "file_delete", "file_patch"} {
 		assert.True(t, names[want], "%s should be part of the fs group", want)
 	}
+}
+
+func writeTestFile(t *testing.T, content string) string {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), "f.txt")
+	require.NoError(t, os.WriteFile(p, []byte(content), 0o644)) //nolint:gosec // test fixture
+	return p
 }
 
 func TestFileWriteReadRoundTrip(t *testing.T) {
@@ -35,7 +42,7 @@ func TestFileWriteReadRoundTrip(t *testing.T) {
 
 	got, err := fileReadTool().Execute(context.Background(), mustArgs(`{"path":"`+p+`"}`))
 	require.NoError(t, err)
-	assert.Equal(t, "hello world", got)
+	assert.Equal(t, "1: hello world\n\n(End of file - total 1 lines)", got)
 }
 
 func TestFileWriteOverwrites(t *testing.T) {
@@ -57,14 +64,64 @@ func TestFileReadMissing(t *testing.T) {
 	require.ErrorContains(t, err, "file_read")
 }
 
-func TestFileReadTrimsLarge(t *testing.T) {
-	dir := t.TempDir()
-	p := filepath.Join(dir, "big.txt")
-	require.NoError(t, os.WriteFile(p, []byte(strings.Repeat("a", 600*1024)), 0o644)) //nolint:gosec // test fixture
+func TestFileReadByteCap(t *testing.T) {
+	lines := make([]string, 60)
+	for i := range lines {
+		lines[i] = strings.Repeat("a", 3000)
+	}
+	p := writeTestFile(t, strings.Join(lines, "\n"))
 
 	got, err := fileReadTool().Execute(context.Background(), mustArgs(`{"path":"`+p+`"}`))
 	require.NoError(t, err)
-	assert.Contains(t, got, "[truncated: file exceeds 512 KiB]")
+	assert.Contains(t, got, "1: "+strings.Repeat("a", 2000)+"... (line truncated to 2000 chars)")
+	assert.Contains(t, got, "(Output capped at 50 KB. Showing lines 1-25. Use offset=26 to continue.)")
+}
+
+func TestFileReadWindowOffset(t *testing.T) {
+	p := writeTestFile(t, "l1\nl2\nl3\nl4\nl5")
+
+	got, err := fileReadTool().Execute(context.Background(), mustArgs(`{"path":"`+p+`","offset":3}`))
+	require.NoError(t, err)
+	assert.Equal(t, "3: l3\n4: l4\n5: l5\n\n(End of file - total 5 lines)", got)
+}
+
+func TestFileReadWindowLimit(t *testing.T) {
+	p := writeTestFile(t, "l1\nl2\nl3\nl4\nl5")
+
+	got, err := fileReadTool().Execute(context.Background(), mustArgs(`{"path":"`+p+`","offset":2,"limit":2}`))
+	require.NoError(t, err)
+	assert.Equal(t, "2: l2\n3: l3\n\n(Showing lines 2-3 of 5. Use offset=4 to continue.)", got)
+}
+
+func TestFileReadOffsetOutOfRange(t *testing.T) {
+	p := writeTestFile(t, "l1\nl2\nl3")
+
+	_, err := fileReadTool().Execute(context.Background(), mustArgs(`{"path":"`+p+`","offset":10}`))
+	require.ErrorContains(t, err, "file_read: Offset 10 is out of range for this file (3 lines)")
+}
+
+func TestFileReadOffsetZeroCoerces(t *testing.T) {
+	p := writeTestFile(t, "l1\nl2\nl3")
+
+	got, err := fileReadTool().Execute(context.Background(), mustArgs(`{"path":"`+p+`","offset":0}`))
+	require.NoError(t, err)
+	assert.Contains(t, got, "1: l1")
+}
+
+func TestFileReadLineTruncation(t *testing.T) {
+	p := writeTestFile(t, strings.Repeat("a", 2500))
+
+	got, err := fileReadTool().Execute(context.Background(), mustArgs(`{"path":"`+p+`"}`))
+	require.NoError(t, err)
+	assert.Equal(t, "1: "+strings.Repeat("a", 2000)+"... (line truncated to 2000 chars)"+"\n\n(End of file - total 1 lines)", got)
+}
+
+func TestFileReadEmpty(t *testing.T) {
+	p := writeTestFile(t, "")
+
+	got, err := fileReadTool().Execute(context.Background(), mustArgs(`{"path":"`+p+`"}`))
+	require.NoError(t, err)
+	assert.Equal(t, "\n\n(End of file - total 0 lines)", got)
 }
 
 func TestFileList(t *testing.T) {
