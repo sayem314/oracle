@@ -72,12 +72,15 @@ func prepareChat(deps Deps, c fiber.Ctx) (chatContext, error) {
 		}
 		sessionID = session.ID
 	default:
-		_, err := deps.Store.GetSession(ctx, *req.SessionID)
+		session, err := deps.Store.GetSession(ctx, *req.SessionID)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return chatContext{}, fiber.NewError(fiber.StatusNotFound, "session not found")
 			}
 			return chatContext{}, err
+		}
+		if session.LoopLastStatus == chat.StatusRunning {
+			return chatContext{}, fiber.NewError(fiber.StatusConflict, "session loop is running")
 		}
 		pending, err := deps.Store.CountPendingApprovalsBySession(ctx, *req.SessionID)
 		if err != nil {

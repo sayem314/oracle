@@ -58,11 +58,17 @@ type Message struct {
 }
 
 type Session struct {
-	ID        int64
-	Title     string
-	Summary   string
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	ID             int64
+	Title          string
+	Summary        string
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+	LoopEnabled    int64
+	LoopInterval   string
+	LoopNextRunAt  sql.NullInt64
+	LoopLastRunAt  sql.NullInt64
+	LoopLastStatus string
+	LoopError      string
 }
 
 type Setting struct {

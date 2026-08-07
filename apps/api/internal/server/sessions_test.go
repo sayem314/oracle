@@ -1,6 +1,7 @@
 package server_test
 
 import (
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"testing"
@@ -14,10 +15,16 @@ import (
 )
 
 type sessionResponse struct {
-	ID        int64     `json:"id"`
-	Title     string    `json:"title"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID             int64      `json:"id"`
+	Title          string     `json:"title"`
+	CreatedAt      time.Time  `json:"created_at"`
+	UpdatedAt      time.Time  `json:"updated_at"`
+	LoopEnabled    bool       `json:"loop_enabled"`
+	LoopInterval   string     `json:"loop_interval"`
+	LoopNextRunAt  *time.Time `json:"loop_next_run_at"`
+	LoopLastRunAt  *time.Time `json:"loop_last_run_at"`
+	LoopLastStatus string     `json:"loop_last_status"`
+	LoopError      string     `json:"loop_error"`
 }
 
 type sessionMessage struct {
@@ -126,7 +133,95 @@ func TestRenameSession(t *testing.T) {
 
 	res = doRequest(t, app, http.MethodPatch, "/api/v1/sessions/"+itoa(session.ID), cookie, map[string]any{})
 	assert.Equal(t, http.StatusBadRequest, res.StatusCode)
-	assert.Equal(t, "title is required", decodeErrorMessage(t, res))
+	assert.Equal(t, "no fields to update", decodeErrorMessage(t, res))
+}
+
+func TestUpdateSessionLoopFields(t *testing.T) {
+	app, s, dbConn := newTestApp(t, llm.NewMock())
+	cookie, _ := signUp(t, app, dbConn, "owner@example.com")
+
+	session, err := s.CreateSession(t.Context(), "")
+	require.NoError(t, err)
+
+	res := doRequest(t, app, http.MethodPatch, "/api/v1/sessions/"+itoa(session.ID), cookie, map[string]any{
+		"loop_enabled":  true,
+		"loop_interval": "30s",
+	})
+	require.Equal(t, http.StatusOK, res.StatusCode)
+	var updated sessionResponse
+	require.NoError(t, json.NewDecoder(res.Body).Decode(&updated))
+	assert.True(t, updated.LoopEnabled)
+	assert.Equal(t, "30s", updated.LoopInterval)
+	require.NotNil(t, updated.LoopNextRunAt, "enabling should queue the first run")
+
+	got, err := s.GetSession(t.Context(), session.ID)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), got.LoopEnabled)
+	assert.True(t, got.LoopNextRunAt.Valid)
+
+	res = doRequest(t, app, http.MethodPatch, "/api/v1/sessions/"+itoa(session.ID), cookie, map[string]any{
+		"loop_enabled": false,
+	})
+	require.Equal(t, http.StatusOK, res.StatusCode)
+	require.NoError(t, json.NewDecoder(res.Body).Decode(&updated))
+	assert.False(t, updated.LoopEnabled)
+	assert.Nil(t, updated.LoopNextRunAt, "disabling should cancel queued runs")
+
+	res = doRequest(t, app, http.MethodPatch, "/api/v1/sessions/"+itoa(session.ID), cookie, map[string]any{
+		"loop_interval": "not-a-duration",
+	})
+	require.Equal(t, http.StatusBadRequest, res.StatusCode)
+	assert.Equal(t, "loop_interval must be a duration like \"30s\" or \"5m\"", decodeErrorMessage(t, res))
+}
+
+func TestRunLoopNow(t *testing.T) {
+	app, s, dbConn := newTestApp(t, llm.NewMock())
+	cookie, _ := signUp(t, app, dbConn, "owner@example.com")
+
+	session, err := s.CreateSession(t.Context(), "")
+	require.NoError(t, err)
+
+	res := doRequest(t, app, http.MethodPost, "/api/v1/sessions/"+itoa(session.ID)+"/loop/run", cookie, map[string]any{})
+	require.Equal(t, http.StatusAccepted, res.StatusCode)
+	var updated sessionResponse
+	require.NoError(t, json.NewDecoder(res.Body).Decode(&updated))
+	require.NotNil(t, updated.LoopNextRunAt, "run now should queue an iteration")
+
+	got, err := s.GetSession(t.Context(), session.ID)
+	require.NoError(t, err)
+	assert.True(t, got.LoopNextRunAt.Valid)
+
+	require.NoError(t, s.UpdateSessionLoopResult(t.Context(), db.UpdateSessionLoopResultParams{
+		ID:             session.ID,
+		LoopLastStatus: "running",
+		LoopError:      "",
+		LoopNextRunAt:  sql.NullInt64{},
+	}))
+
+	res = doRequest(t, app, http.MethodPost, "/api/v1/sessions/"+itoa(session.ID)+"/loop/run", cookie, map[string]any{})
+	require.Equal(t, http.StatusConflict, res.StatusCode)
+	assert.Equal(t, "loop run in progress", decodeErrorMessage(t, res))
+}
+
+func TestChatRejectedWhileLoopRunning(t *testing.T) {
+	app, s, dbConn := newTestApp(t, llm.NewMock())
+	cookie, _ := signUp(t, app, dbConn, "owner@example.com")
+
+	session, err := s.CreateSession(t.Context(), "")
+	require.NoError(t, err)
+	require.NoError(t, s.UpdateSessionLoopResult(t.Context(), db.UpdateSessionLoopResultParams{
+		ID:             session.ID,
+		LoopLastStatus: "running",
+		LoopError:      "",
+		LoopNextRunAt:  sql.NullInt64{},
+	}))
+
+	res := doRequest(t, app, http.MethodPost, "/api/v1/chat", cookie, map[string]any{
+		"session_id": session.ID,
+		"message":    "hello",
+	})
+	require.Equal(t, http.StatusConflict, res.StatusCode)
+	assert.Equal(t, "session loop is running", decodeErrorMessage(t, res))
 }
 
 func TestDeleteSession(t *testing.T) {

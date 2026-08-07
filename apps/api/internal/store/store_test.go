@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -214,11 +215,138 @@ func TestMigrateIsIdempotent(t *testing.T) {
 
 	applied, err := store.Migrate(dbConn)
 	require.NoError(t, err)
-	assert.Equal(t, 6, applied)
+	assert.Equal(t, 7, applied)
 
 	applied, err = store.Migrate(dbConn)
 	require.NoError(t, err)
 	assert.Equal(t, 0, applied)
+}
+
+func TestSessionLoopLifecycle(t *testing.T) {
+	s, _ := openStore(t)
+	ctx := t.Context()
+
+	session, err := s.CreateSession(ctx, "")
+	require.NoError(t, err)
+
+	next := time.Date(2026, 8, 5, 8, 0, 0, 0, time.UTC).Unix()
+	require.NoError(t, s.UpdateSessionLoop(ctx, db.UpdateSessionLoopParams{
+		ID:            session.ID,
+		LoopEnabled:   1,
+		LoopInterval:  "30s",
+		LoopNextRunAt: sql.NullInt64{Int64: next, Valid: true},
+	}))
+
+	due, err := s.ListDueSessionLoops(ctx, sql.NullInt64{Int64: time.Date(2026, 8, 5, 8, 0, 30, 0, time.UTC).Unix(), Valid: true})
+	require.NoError(t, err)
+	require.Len(t, due, 1)
+	assert.Equal(t, session.ID, due[0].ID)
+
+	// Claiming zeroes next_run_at so the loop is invisible to further polls.
+	claimed, err := s.ClaimSessionLoop(ctx, db.ClaimSessionLoopParams{
+		ID:            session.ID,
+		LoopNextRunAt: sql.NullInt64{Int64: next, Valid: true},
+		LoopLastRunAt: sql.NullInt64{Int64: next, Valid: true},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), claimed)
+
+	due, err = s.ListDueSessionLoops(ctx, sql.NullInt64{Int64: time.Date(2026, 8, 6, 8, 0, 0, 0, time.UTC).Unix(), Valid: true})
+	require.NoError(t, err)
+	assert.Empty(t, due)
+
+	// A stale claim attempt with the old next_run_at loses the race.
+	claimed, err = s.ClaimSessionLoop(ctx, db.ClaimSessionLoopParams{
+		ID:            session.ID,
+		LoopNextRunAt: sql.NullInt64{Int64: next, Valid: true},
+		LoopLastRunAt: sql.NullInt64{Int64: next, Valid: true},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), claimed)
+
+	got, err := s.GetSession(ctx, session.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "running", got.LoopLastStatus)
+
+	require.NoError(t, s.UpdateSessionLoopResult(ctx, db.UpdateSessionLoopResultParams{
+		ID:             session.ID,
+		LoopLastStatus: "done",
+		LoopError:      "",
+		LoopNextRunAt:  sql.NullInt64{Int64: next + 30, Valid: true},
+	}))
+
+	got, err = s.GetSession(ctx, session.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "done", got.LoopLastStatus)
+	assert.True(t, got.LoopNextRunAt.Valid)
+}
+
+func TestRecoverStaleLoops(t *testing.T) {
+	s, _ := openStore(t)
+	ctx := t.Context()
+
+	stale, err := s.CreateSession(ctx, "stale")
+	require.NoError(t, err)
+	require.NoError(t, s.UpdateSessionLoop(ctx, db.UpdateSessionLoopParams{
+		ID:            stale.ID,
+		LoopEnabled:   1,
+		LoopInterval:  "30s",
+		LoopNextRunAt: sql.NullInt64{},
+	}))
+
+	oneShot, err := s.CreateSession(ctx, "one-shot")
+	require.NoError(t, err)
+	require.NoError(t, s.UpdateSessionLoop(ctx, db.UpdateSessionLoopParams{
+		ID:            oneShot.ID,
+		LoopEnabled:   0,
+		LoopInterval:  "",
+		LoopNextRunAt: sql.NullInt64{},
+	}))
+
+	for _, id := range []int64{stale.ID, oneShot.ID} {
+		require.NoError(t, s.UpdateSessionLoopResult(ctx, db.UpdateSessionLoopResultParams{
+			ID:             id,
+			LoopLastStatus: "running",
+			LoopError:      "",
+			LoopNextRunAt:  sql.NullInt64{},
+		}))
+	}
+
+	recovered, err := s.RecoverStaleLoops(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), recovered)
+
+	got, err := s.GetSession(ctx, stale.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "error", got.LoopLastStatus)
+	assert.Equal(t, "interrupted by restart", got.LoopError)
+	assert.True(t, got.LoopNextRunAt.Valid, "enabled loop should be rescheduled")
+
+	got, err = s.GetSession(ctx, oneShot.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "error", got.LoopLastStatus)
+	assert.False(t, got.LoopNextRunAt.Valid, "one-shot loop should stay idle")
+
+	recovered, err = s.RecoverStaleLoops(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), recovered)
+}
+
+func TestSetSessionLoopNextRun(t *testing.T) {
+	s, _ := openStore(t)
+	ctx := t.Context()
+
+	session, err := s.CreateSession(ctx, "")
+	require.NoError(t, err)
+
+	require.NoError(t, s.SetSessionLoopNextRun(ctx, db.SetSessionLoopNextRunParams{
+		ID:            session.ID,
+		LoopNextRunAt: sql.NullInt64{Int64: time.Now().Unix(), Valid: true},
+	}))
+
+	got, err := s.GetSession(ctx, session.ID)
+	require.NoError(t, err)
+	assert.True(t, got.LoopNextRunAt.Valid)
 }
 
 func TestLLMProviderSingleton(t *testing.T) {

@@ -19,6 +19,7 @@ import (
 	"github.com/sayem314/oracle/apps/api/internal/config"
 	"github.com/sayem314/oracle/apps/api/internal/llm"
 	"github.com/sayem314/oracle/apps/api/internal/permission"
+	"github.com/sayem314/oracle/apps/api/internal/scheduler"
 	"github.com/sayem314/oracle/apps/api/internal/server"
 	"github.com/sayem314/oracle/apps/api/internal/store"
 	"github.com/sayem314/oracle/apps/api/internal/store/db"
@@ -102,12 +103,16 @@ func main() {
 		Chat:  engine,
 	})
 
+	loops := scheduler.New(st, engine.AsHeadless(), cfg.LoopPollInterval, cfg.LoopRunTimeout)
+	loops.Start()
+
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
 
 	go func() {
 		<-quit
 		log.Info().Msg("shutting down")
+		loops.Stop()
 		if err := app.Shutdown(); err != nil {
 			log.Error().Err(err).Msg("shutdown")
 		}

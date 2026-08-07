@@ -50,6 +50,7 @@ func New(deps Deps) *fiber.App {
 	api.Get("/sessions/:id/messages", newListMessagesHandler(deps))
 	api.Patch("/sessions/:id", newUpdateSessionHandler(deps))
 	api.Delete("/sessions/:id", newDeleteSessionHandler(deps))
+	api.Post("/sessions/:id/loop/run", newRunLoopHandler(deps))
 
 	return app
 }

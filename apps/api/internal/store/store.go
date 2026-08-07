@@ -17,6 +17,12 @@ type Store interface {
 	UpdateSessionTitle(ctx context.Context, arg db.UpdateSessionTitleParams) error
 	TouchSession(ctx context.Context, id int64) error
 	DeleteSession(ctx context.Context, id int64) error
+	UpdateSessionLoop(ctx context.Context, arg db.UpdateSessionLoopParams) error
+	SetSessionLoopNextRun(ctx context.Context, arg db.SetSessionLoopNextRunParams) error
+	ListDueSessionLoops(ctx context.Context, due sql.NullInt64) ([]db.Session, error)
+	ClaimSessionLoop(ctx context.Context, arg db.ClaimSessionLoopParams) (int64, error)
+	UpdateSessionLoopResult(ctx context.Context, arg db.UpdateSessionLoopResultParams) error
+	RecoverStaleLoops(ctx context.Context) (int64, error)
 
 	AppendMessage(ctx context.Context, arg db.AppendMessageParams) (db.Message, error)
 	ListMessages(ctx context.Context, arg db.ListMessagesParams) ([]db.Message, error)

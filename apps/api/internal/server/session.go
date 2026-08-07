@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v3"
@@ -15,19 +16,39 @@ import (
 const sessionListLimit = 200
 
 type sessionResponse struct {
-	ID        int64     `json:"id"`
-	Title     string    `json:"title"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID             int64      `json:"id"`
+	Title          string     `json:"title"`
+	CreatedAt      time.Time  `json:"created_at"`
+	UpdatedAt      time.Time  `json:"updated_at"`
+	LoopEnabled    bool       `json:"loop_enabled"`
+	LoopInterval   string     `json:"loop_interval"`
+	LoopNextRunAt  *time.Time `json:"loop_next_run_at"`
+	LoopLastRunAt  *time.Time `json:"loop_last_run_at"`
+	LoopLastStatus string     `json:"loop_last_status"`
+	LoopError      string     `json:"loop_error"`
 }
 
 func sessionToResponse(s db.Session) sessionResponse {
 	return sessionResponse{
-		ID:        s.ID,
-		Title:     s.Title,
-		CreatedAt: s.CreatedAt,
-		UpdatedAt: s.UpdatedAt,
+		ID:             s.ID,
+		Title:          s.Title,
+		CreatedAt:      s.CreatedAt,
+		UpdatedAt:      s.UpdatedAt,
+		LoopEnabled:    s.LoopEnabled == 1,
+		LoopInterval:   s.LoopInterval,
+		LoopNextRunAt:  unixTimePtr(s.LoopNextRunAt),
+		LoopLastRunAt:  unixTimePtr(s.LoopLastRunAt),
+		LoopLastStatus: s.LoopLastStatus,
+		LoopError:      s.LoopError,
 	}
+}
+
+func unixTimePtr(t sql.NullInt64) *time.Time {
+	if !t.Valid {
+		return nil
+	}
+	v := time.Unix(t.Int64, 0)
+	return &v
 }
 
 // resolveSession loads a session by path id or returns 404 so existence is
@@ -130,7 +151,9 @@ func newListMessagesHandler(deps Deps) fiber.Handler {
 }
 
 type updateSessionRequest struct {
-	Title *string `json:"title"`
+	Title        *string `json:"title"`
+	LoopEnabled  *bool   `json:"loop_enabled"`
+	LoopInterval *string `json:"loop_interval"`
 }
 
 func newUpdateSessionHandler(deps Deps) fiber.Handler {
@@ -144,19 +167,103 @@ func newUpdateSessionHandler(deps Deps) fiber.Handler {
 		if err := c.Bind().JSON(&req); err != nil {
 			return fiber.NewError(fiber.StatusBadRequest, "invalid request body")
 		}
-		if req.Title == nil {
-			return fiber.NewError(fiber.StatusBadRequest, "title is required")
+		if req.Title == nil && req.LoopEnabled == nil && req.LoopInterval == nil {
+			return fiber.NewError(fiber.StatusBadRequest, "no fields to update")
 		}
 
-		if err := deps.Store.UpdateSessionTitle(c.Context(), db.UpdateSessionTitleParams{
-			Title: *req.Title,
-			ID:    session.ID,
+		if req.Title != nil {
+			if err := deps.Store.UpdateSessionTitle(c.Context(), db.UpdateSessionTitleParams{
+				Title: *req.Title,
+				ID:    session.ID,
+			}); err != nil {
+				return err
+			}
+			session.Title = *req.Title
+		}
+
+		if req.LoopEnabled != nil || req.LoopInterval != nil {
+			enabled := session.LoopEnabled == 1
+			if req.LoopEnabled != nil {
+				enabled = *req.LoopEnabled
+			}
+			interval := session.LoopInterval
+			if req.LoopInterval != nil {
+				if err := validateLoopInterval(*req.LoopInterval); err != nil {
+					return err
+				}
+				interval = *req.LoopInterval
+			}
+
+			var nextRunAt sql.NullInt64
+			switch {
+			case req.LoopEnabled == nil:
+				nextRunAt = session.LoopNextRunAt
+			case enabled:
+				nextRunAt = sql.NullInt64{Int64: time.Now().Unix(), Valid: true}
+			default:
+				nextRunAt = sql.NullInt64{}
+			}
+
+			if err := deps.Store.UpdateSessionLoop(c.Context(), db.UpdateSessionLoopParams{
+				ID:            session.ID,
+				LoopEnabled:   boolToInt64(enabled),
+				LoopInterval:  interval,
+				LoopNextRunAt: nextRunAt,
+			}); err != nil {
+				return err
+			}
+			session.LoopEnabled = boolToInt64(enabled)
+			session.LoopInterval = interval
+			session.LoopNextRunAt = nextRunAt
+		}
+
+		return c.JSON(sessionToResponse(session))
+	}
+}
+
+// validateLoopInterval accepts an empty string (continuous) or a Go duration
+// like "30s" or "5m".
+func validateLoopInterval(raw string) error {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "loop_interval must be a duration like \"30s\" or \"5m\"")
+	}
+	if d < 0 {
+		return fiber.NewError(fiber.StatusBadRequest, "loop_interval cannot be negative")
+	}
+	return nil
+}
+
+func boolToInt64(b bool) int64 {
+	if b {
+		return 1
+	}
+	return 0
+}
+
+// newRunLoopHandler queues one iteration immediately, even when the loop is
+// disabled (a one-shot run). The scheduler claims and runs it asynchronously.
+func newRunLoopHandler(deps Deps) fiber.Handler {
+	return func(c fiber.Ctx) error {
+		session, err := resolveSession(deps, c)
+		if err != nil {
+			return err
+		}
+		if session.LoopLastStatus == chat.StatusRunning {
+			return fiber.NewError(fiber.StatusConflict, "loop run in progress")
+		}
+		if err := deps.Store.SetSessionLoopNextRun(c.Context(), db.SetSessionLoopNextRunParams{
+			ID:            session.ID,
+			LoopNextRunAt: sql.NullInt64{Int64: time.Now().Unix(), Valid: true},
 		}); err != nil {
 			return err
 		}
-
-		session.Title = *req.Title
-		return c.JSON(sessionToResponse(session))
+		session.LoopNextRunAt = sql.NullInt64{Int64: time.Now().Unix(), Valid: true}
+		return c.Status(fiber.StatusAccepted).JSON(sessionToResponse(session))
 	}
 }
 

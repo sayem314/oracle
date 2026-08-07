@@ -7,12 +7,38 @@ package db
 
 import (
 	"context"
+	"database/sql"
 )
+
+const claimSessionLoop = `-- name: ClaimSessionLoop :execrows
+UPDATE sessions
+SET loop_last_status = 'running',
+    loop_last_run_at = ?,
+    loop_error = '',
+    loop_next_run_at = NULL
+WHERE id = ?
+  AND loop_next_run_at = ?
+  AND loop_last_status != 'running'
+`
+
+type ClaimSessionLoopParams struct {
+	LoopLastRunAt sql.NullInt64
+	ID            int64
+	LoopNextRunAt sql.NullInt64
+}
+
+func (q *Queries) ClaimSessionLoop(ctx context.Context, arg ClaimSessionLoopParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, claimSessionLoop, arg.LoopLastRunAt, arg.ID, arg.LoopNextRunAt)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
 
 const createSession = `-- name: CreateSession :one
 INSERT INTO sessions (title)
 VALUES (?)
-RETURNING id, title, summary, created_at, updated_at
+RETURNING id, title, summary, created_at, updated_at, loop_enabled, loop_interval, loop_next_run_at, loop_last_run_at, loop_last_status, loop_error
 `
 
 func (q *Queries) CreateSession(ctx context.Context, title string) (Session, error) {
@@ -24,6 +50,12 @@ func (q *Queries) CreateSession(ctx context.Context, title string) (Session, err
 		&i.Summary,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.LoopEnabled,
+		&i.LoopInterval,
+		&i.LoopNextRunAt,
+		&i.LoopLastRunAt,
+		&i.LoopLastStatus,
+		&i.LoopError,
 	)
 	return i, err
 }
@@ -39,7 +71,7 @@ func (q *Queries) DeleteSession(ctx context.Context, id int64) error {
 }
 
 const getSession = `-- name: GetSession :one
-SELECT id, title, summary, created_at, updated_at
+SELECT id, title, summary, created_at, updated_at, loop_enabled, loop_interval, loop_next_run_at, loop_last_run_at, loop_last_status, loop_error
 FROM sessions
 WHERE id = ?
 `
@@ -53,12 +85,62 @@ func (q *Queries) GetSession(ctx context.Context, id int64) (Session, error) {
 		&i.Summary,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.LoopEnabled,
+		&i.LoopInterval,
+		&i.LoopNextRunAt,
+		&i.LoopLastRunAt,
+		&i.LoopLastStatus,
+		&i.LoopError,
 	)
 	return i, err
 }
 
+const listDueSessionLoops = `-- name: ListDueSessionLoops :many
+SELECT id, title, summary, created_at, updated_at, loop_enabled, loop_interval, loop_next_run_at, loop_last_run_at, loop_last_status, loop_error
+FROM sessions
+WHERE loop_next_run_at IS NOT NULL
+  AND loop_next_run_at <= ?
+ORDER BY loop_next_run_at
+LIMIT 50
+`
+
+func (q *Queries) ListDueSessionLoops(ctx context.Context, loopNextRunAt sql.NullInt64) ([]Session, error) {
+	rows, err := q.db.QueryContext(ctx, listDueSessionLoops, loopNextRunAt)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Session
+	for rows.Next() {
+		var i Session
+		if err := rows.Scan(
+			&i.ID,
+			&i.Title,
+			&i.Summary,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.LoopEnabled,
+			&i.LoopInterval,
+			&i.LoopNextRunAt,
+			&i.LoopLastRunAt,
+			&i.LoopLastStatus,
+			&i.LoopError,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listSessions = `-- name: ListSessions :many
-SELECT id, title, summary, created_at, updated_at
+SELECT id, title, summary, created_at, updated_at, loop_enabled, loop_interval, loop_next_run_at, loop_last_run_at, loop_last_status, loop_error
 FROM sessions
 ORDER BY updated_at DESC, id DESC
 LIMIT ? OFFSET ?
@@ -84,6 +166,12 @@ func (q *Queries) ListSessions(ctx context.Context, arg ListSessionsParams) ([]S
 			&i.Summary,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.LoopEnabled,
+			&i.LoopInterval,
+			&i.LoopNextRunAt,
+			&i.LoopLastRunAt,
+			&i.LoopLastStatus,
+			&i.LoopError,
 		); err != nil {
 			return nil, err
 		}
@@ -98,6 +186,38 @@ func (q *Queries) ListSessions(ctx context.Context, arg ListSessionsParams) ([]S
 	return items, nil
 }
 
+const recoverStaleLoops = `-- name: RecoverStaleLoops :execrows
+UPDATE sessions
+SET loop_last_status = 'error',
+    loop_error = 'interrupted by restart',
+    loop_next_run_at = CASE WHEN loop_enabled = 1 THEN CAST(strftime('%s', 'now') AS INTEGER) ELSE NULL END
+WHERE loop_last_status = 'running'
+`
+
+func (q *Queries) RecoverStaleLoops(ctx context.Context) (int64, error) {
+	result, err := q.db.ExecContext(ctx, recoverStaleLoops)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const setSessionLoopNextRun = `-- name: SetSessionLoopNextRun :exec
+UPDATE sessions
+SET loop_next_run_at = ?
+WHERE id = ?
+`
+
+type SetSessionLoopNextRunParams struct {
+	LoopNextRunAt sql.NullInt64
+	ID            int64
+}
+
+func (q *Queries) SetSessionLoopNextRun(ctx context.Context, arg SetSessionLoopNextRunParams) error {
+	_, err := q.db.ExecContext(ctx, setSessionLoopNextRun, arg.LoopNextRunAt, arg.ID)
+	return err
+}
+
 const touchSession = `-- name: TouchSession :exec
 UPDATE sessions
 SET updated_at = CURRENT_TIMESTAMP
@@ -106,6 +226,56 @@ WHERE id = ?
 
 func (q *Queries) TouchSession(ctx context.Context, id int64) error {
 	_, err := q.db.ExecContext(ctx, touchSession, id)
+	return err
+}
+
+const updateSessionLoop = `-- name: UpdateSessionLoop :exec
+UPDATE sessions
+SET loop_enabled = ?,
+    loop_interval = ?,
+    loop_next_run_at = ?
+WHERE id = ?
+`
+
+type UpdateSessionLoopParams struct {
+	LoopEnabled   int64
+	LoopInterval  string
+	LoopNextRunAt sql.NullInt64
+	ID            int64
+}
+
+func (q *Queries) UpdateSessionLoop(ctx context.Context, arg UpdateSessionLoopParams) error {
+	_, err := q.db.ExecContext(ctx, updateSessionLoop,
+		arg.LoopEnabled,
+		arg.LoopInterval,
+		arg.LoopNextRunAt,
+		arg.ID,
+	)
+	return err
+}
+
+const updateSessionLoopResult = `-- name: UpdateSessionLoopResult :exec
+UPDATE sessions
+SET loop_last_status = ?,
+    loop_error = ?,
+    loop_next_run_at = ?
+WHERE id = ?
+`
+
+type UpdateSessionLoopResultParams struct {
+	LoopLastStatus string
+	LoopError      string
+	LoopNextRunAt  sql.NullInt64
+	ID             int64
+}
+
+func (q *Queries) UpdateSessionLoopResult(ctx context.Context, arg UpdateSessionLoopResultParams) error {
+	_, err := q.db.ExecContext(ctx, updateSessionLoopResult,
+		arg.LoopLastStatus,
+		arg.LoopError,
+		arg.LoopNextRunAt,
+		arg.ID,
+	)
 	return err
 }
 

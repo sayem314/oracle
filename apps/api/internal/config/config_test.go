@@ -3,6 +3,7 @@ package config_test
 import (
 	"os"
 	"testing"
+	"time"
 
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
@@ -54,6 +55,29 @@ func TestLoadDefaults(t *testing.T) {
 	assert.Equal(t, 2, cfg.ContextTailTurns)
 	assert.Equal(t, 8000, cfg.ContextKeepRecentTokens)
 	assert.Equal(t, 2000, cfg.ToolOutputChars)
+	assert.Equal(t, 5*time.Second, cfg.LoopPollInterval)
+	assert.Equal(t, 10*time.Minute, cfg.LoopRunTimeout)
+}
+
+func TestLoopEnvOverride(t *testing.T) {
+	clearEnv(t)
+	withAuthSecret(t)
+	t.Setenv("ORACLE_LOOP_POLL_INTERVAL", "2s")
+	t.Setenv("ORACLE_LOOP_RUN_TIMEOUT", "30s")
+
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	assert.Equal(t, 2*time.Second, cfg.LoopPollInterval)
+	assert.Equal(t, 30*time.Second, cfg.LoopRunTimeout)
+}
+
+func TestLoopInvalidDuration(t *testing.T) {
+	clearEnv(t)
+	withAuthSecret(t)
+	t.Setenv("ORACLE_LOOP_POLL_INTERVAL", "soon")
+
+	_, err := config.Load()
+	require.Error(t, err)
 }
 
 func TestDatabaseURLEnvOverride(t *testing.T) {

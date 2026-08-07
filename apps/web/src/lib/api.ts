@@ -269,6 +269,12 @@ export interface SessionInfo {
   title: string;
   created_at: string;
   updated_at: string;
+  loop_enabled: boolean;
+  loop_interval: string;
+  loop_next_run_at: string | null;
+  loop_last_run_at: string | null;
+  loop_last_status: string;
+  loop_error: string;
 }
 
 export interface SessionToolCall {
@@ -288,6 +294,12 @@ export interface SessionMessage {
   tool_calls?: SessionToolCall[];
 }
 
+export interface SessionPatch {
+  title?: string;
+  loop_enabled?: boolean;
+  loop_interval?: string;
+}
+
 export async function listSessions(): Promise<SessionInfo[]> {
   const res = await getRequest("/api/v1/sessions");
   return (await res.json()) as SessionInfo[];
@@ -298,8 +310,14 @@ export async function listSessionMessages(id: number): Promise<SessionMessage[]>
   return (await res.json()) as SessionMessage[];
 }
 
-export async function renameSession(id: number, title: string): Promise<SessionInfo> {
-  const res = await patchJSON(`/api/v1/sessions/${id}`, { title });
+export async function updateSession(id: number, patch: SessionPatch): Promise<SessionInfo> {
+  const res = await patchJSON(`/api/v1/sessions/${id}`, patch);
+  return (await res.json()) as SessionInfo;
+}
+
+// Queues one loop iteration immediately, even when the loop is disabled.
+export async function runLoopNow(id: number): Promise<SessionInfo> {
+  const res = await postJSON(`/api/v1/sessions/${id}/loop/run`, {});
   return (await res.json()) as SessionInfo;
 }
 

@@ -6,6 +6,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/knadh/koanf/parsers/dotenv"
 	"github.com/knadh/koanf/providers/confmap"
@@ -28,6 +29,8 @@ const (
 	defaultContextTailTurns  = 2
 	defaultContextKeepRecent = 8000
 	defaultToolOutputChars   = 2000
+	defaultLoopPollInterval  = 5 * time.Second
+	defaultLoopRunTimeout    = 10 * time.Minute
 )
 
 type Config struct {
@@ -51,6 +54,11 @@ type Config struct {
 	ContextTailTurns        int
 	ContextKeepRecentTokens int
 	ToolOutputChars         int
+
+	// LoopPollInterval is how often the scheduler scans sessions for due loop
+	// iterations. LoopRunTimeout bounds each headless iteration.
+	LoopPollInterval time.Duration
+	LoopRunTimeout   time.Duration
 }
 
 func Load() (Config, error) {
@@ -69,6 +77,8 @@ func Load() (Config, error) {
 		"context_tail_turns":         defaultContextTailTurns,
 		"context_keep_recent_tokens": defaultContextKeepRecent,
 		"tool_output_chars":          defaultToolOutputChars,
+		"loop_poll_interval":         defaultLoopPollInterval.String(),
+		"loop_run_timeout":           defaultLoopRunTimeout.String(),
 	}, "."), nil); err != nil {
 		return Config{}, fmt.Errorf("load defaults: %w", err)
 	}
@@ -133,6 +143,15 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("invalid permission_rules: %w", err)
 	}
 
+	loopPollInterval := k.Duration("loop_poll_interval")
+	if loopPollInterval <= 0 {
+		return Config{}, fmt.Errorf("loop_poll_interval must be a positive duration, got %q", k.String("loop_poll_interval"))
+	}
+	loopRunTimeout := k.Duration("loop_run_timeout")
+	if loopRunTimeout <= 0 {
+		return Config{}, fmt.Errorf("loop_run_timeout must be a positive duration, got %q", k.String("loop_run_timeout"))
+	}
+
 	return Config{
 		Port:                    port,
 		LogLevel:                lvl,
@@ -150,6 +169,8 @@ func Load() (Config, error) {
 		ContextTailTurns:        k.Int("context_tail_turns"),
 		ContextKeepRecentTokens: k.Int("context_keep_recent_tokens"),
 		ToolOutputChars:         k.Int("tool_output_chars"),
+		LoopPollInterval:        loopPollInterval,
+		LoopRunTimeout:          loopRunTimeout,
 	}, nil
 }
 

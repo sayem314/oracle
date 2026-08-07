@@ -17,13 +17,15 @@ import (
 const HistoryLimit = 1000
 
 // ToolRoundLimit caps model->tool->model iterations in a single run so a
-// misbehaving model cannot loop forever.
+// misbehaving model cannot loop forever. Loop iterations raise it via the
+// Engine field.
 const ToolRoundLimit = 5
 
 const FinishAwaitingApproval = "awaiting_approval"
 
 const (
 	StatusPending          = "pending"
+	StatusRunning          = "running"
 	StatusDone             = "done"
 	StatusError            = "error"
 	StatusAwaitingApproval = "awaiting_approval"
@@ -113,6 +115,10 @@ type Engine struct {
 	// system prompt, from DetectEnvironment.
 	Environment string
 	Headless    bool
+	// ToolRoundLimit caps model->tool->model rounds in a run; zero means the
+	// package default of 5. Loop runs raise it so long goals can chain many
+	// tool calls per iteration.
+	ToolRoundLimit int
 }
 
 // AsHeadless returns a copy for unattended runs, where ask verdicts become
@@ -121,13 +127,14 @@ type Engine struct {
 func (e *Engine) AsHeadless() *Engine {
 	ref := e.rulesRef()
 	c := &Engine{
-		Store:       e.Store,
-		LLM:         e.LLM,
-		Tools:       e.Tools,
-		Compaction:  e.Compaction,
-		Permissions: e.Permissions,
-		Environment: e.Environment,
-		Headless:    true,
+		Store:          e.Store,
+		LLM:            e.LLM,
+		Tools:          e.Tools,
+		Compaction:     e.Compaction,
+		Permissions:    e.Permissions,
+		Environment:    e.Environment,
+		Headless:       true,
+		ToolRoundLimit: e.ToolRoundLimit,
 	}
 	c.rules.Store(ref)
 	return c
@@ -186,7 +193,12 @@ func (e *Engine) Run(ctx context.Context, sink Sink, sessionID int64, req llm.Re
 		}
 	}
 
-	for range ToolRoundLimit {
+	roundLimit := e.ToolRoundLimit
+	if roundLimit == 0 {
+		roundLimit = ToolRoundLimit
+	}
+
+	for range roundLimit {
 		roundReq := req
 		roundReq.Tools = tools
 
@@ -310,7 +322,7 @@ func (e *Engine) Run(ctx context.Context, sink Sink, sessionID int64, req llm.Re
 		}
 	}
 
-	return fmt.Errorf("tool call round limit (%d) reached", ToolRoundLimit)
+	return fmt.Errorf("tool call round limit (%d) reached", roundLimit)
 }
 
 func (e *Engine) evaluate(rules *permission.Ruleset, name string) permission.Verdict {

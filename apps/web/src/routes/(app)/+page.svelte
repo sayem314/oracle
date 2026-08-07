@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, tick } from "svelte";
+  import { onDestroy, onMount, tick } from "svelte";
   import {
     streamChat,
     decideApproval,
@@ -7,7 +7,8 @@
     listSessionMessages,
     getLLMProvider,
     setLLMModel,
-    renameSession,
+    updateSession,
+    runLoopNow,
     deleteSession,
     type ChatStreamCallbacks,
     type SessionInfo,
@@ -40,16 +41,46 @@
   let renamingId = $state<number | null>(null);
   let renameValue = $state("");
 
+  let loopEnabled = $state(false);
+  let loopInterval = $state("");
+  let loopSaving = $state(false);
+  let prevLoopStatus = $state("");
+
   let scroller: HTMLElement | undefined = $state();
   let field: HTMLTextAreaElement | undefined = $state();
   let aborter: AbortController | null = null;
 
+  let activeSession = $derived(sessions.find((s) => s.id === activeSessionId) ?? null);
+  let loopRunning = $derived(activeSession?.loop_last_status === "running");
   let awaitingApproval = $derived(blocks.some((b) => b.kind === "tool" && b.status === "awaiting"));
+
+  let pollTimer: number | undefined;
 
   onMount(() => {
     void refreshSessions();
     void refreshModel();
+    pollTimer = window.setInterval(() => void pollLoop(), 5000);
   });
+
+  onDestroy(() => {
+    if (pollTimer !== undefined) {
+      window.clearInterval(pollTimer);
+    }
+  });
+
+  // Keeps the loop status live and reloads messages when a headless
+  // iteration completes while this session is open.
+  async function pollLoop() {
+    if (activeSessionId === null || streaming) return;
+    const status = activeSession?.loop_last_status ?? "";
+    if (status !== prevLoopStatus && (status === "done" || status === "error")) {
+      prevLoopStatus = status;
+      await openSession(activeSessionId);
+      return;
+    }
+    prevLoopStatus = status;
+    await refreshSessions();
+  }
 
   async function refreshModel() {
     try {
@@ -108,6 +139,11 @@
     error = "";
     loadingHistory = true;
     try {
+      await refreshSessions();
+      const s = sessions.find((x) => x.id === id);
+      loopEnabled = s?.loop_enabled ?? false;
+      loopInterval = s?.loop_interval ?? "";
+      prevLoopStatus = s?.loop_last_status ?? "";
       const msgs = await listSessionMessages(id);
       const next: Block[] = [];
       for (const m of msgs) {
@@ -159,7 +195,7 @@
     const id = renamingId;
     renamingId = null;
     try {
-      await renameSession(id, renameValue.trim());
+      await updateSession(id, { title: renameValue.trim() });
       await refreshSessions();
     } catch (err) {
       error = err instanceof Error ? err.message : "failed to rename session";
@@ -258,7 +294,7 @@
 
   async function send() {
     const message = input.trim();
-    if (!message || streaming || awaitingApproval) return;
+    if (!message || streaming || awaitingApproval || loopRunning) return;
 
     input = "";
     blocks = [...blocks, { kind: "user", content: message }];
@@ -295,6 +331,39 @@
   function titleOf(s: SessionInfo): string {
     return s.title.trim() || `Session ${s.id}`;
   }
+
+  function fmtTime(iso: string | null): string {
+    if (!iso) return "soon";
+    return new Date(iso).toLocaleTimeString();
+  }
+
+  async function applyLoop() {
+    if (activeSessionId === null || loopSaving) return;
+    loopSaving = true;
+    try {
+      await updateSession(activeSessionId, {
+        loop_enabled: loopEnabled,
+        loop_interval: loopInterval.trim(),
+      });
+      await refreshSessions();
+      error = "";
+    } catch (err) {
+      error = err instanceof Error ? err.message : "failed to update loop";
+    } finally {
+      loopSaving = false;
+    }
+  }
+
+  async function runNow() {
+    if (activeSessionId === null || loopSaving) return;
+    try {
+      await runLoopNow(activeSessionId);
+      await refreshSessions();
+      error = "";
+    } catch (err) {
+      error = err instanceof Error ? err.message : "failed to run loop";
+    }
+  }
 </script>
 
 <div class="chat-layout">
@@ -315,6 +384,9 @@
             />
           {:else}
             <button class="session-open" onclick={() => void openSession(s.id)}>{titleOf(s)}</button>
+            {#if s.loop_enabled}
+              <span class="loop-badge" title="Loop enabled">loop</span>
+            {/if}
             <span class="session-actions">
               <button class="icon" title="Rename" onclick={() => void startRename(s)}>&#9998;</button>
               <button class="icon danger" title="Delete" onclick={() => void removeSession(s.id)}>&#10005;</button>
@@ -395,6 +467,42 @@
     </div>
 
     <div class="composer-bar">
+      {#if activeSession}
+        <div class="loop-bar">
+          <label class="loop-toggle">
+            <input type="checkbox" bind:checked={loopEnabled} onchange={() => void applyLoop()} disabled={loopSaving} />
+            <span>Loop</span>
+          </label>
+          <input
+            class="loop-interval"
+            bind:value={loopInterval}
+            placeholder="interval (e.g. 30s, 5m, empty = continuous)"
+            aria-label="Loop interval"
+            disabled={loopSaving}
+            onkeydown={(e) => {
+              if (e.key === "Enter") void applyLoop();
+            }}
+          />
+          <button class="loop-action" disabled={loopSaving} onclick={() => void applyLoop()}>Apply</button>
+          <button class="loop-action" disabled={loopSaving || loopRunning} onclick={() => void runNow()}>Run now</button
+          >
+          <span class="loop-status">
+            {#if loopRunning}
+              running...
+            {:else if activeSession.loop_error}
+              {activeSession.loop_error}
+            {:else if activeSession.loop_last_status === "done" || activeSession.loop_last_status === "error"}
+              {#if activeSession.loop_enabled}
+                last run {fmtTime(activeSession.loop_last_run_at)}, next {fmtTime(activeSession.loop_next_run_at)}
+              {:else}
+                last run {fmtTime(activeSession.loop_last_run_at)}
+              {/if}
+            {:else}
+              not run yet
+            {/if}
+          </span>
+        </div>
+      {/if}
       <form
         class="composer"
         onsubmit={(e) => {
@@ -408,9 +516,15 @@
             bind:value={input}
             onkeydown={onKeydown}
             rows="1"
-            placeholder={awaitingApproval ? "Approve or deny the pending tool call" : "Message oracle"}
-            disabled={streaming || awaitingApproval}></textarea>
-          <button type="submit" class="send" disabled={streaming || awaitingApproval || !input.trim()}>Send</button>
+            placeholder={loopRunning
+              ? "Loop run in progress..."
+              : awaitingApproval
+                ? "Approve or deny the pending tool call"
+                : "Message oracle"}
+            disabled={streaming || awaitingApproval || loopRunning}></textarea>
+          <button type="submit" class="send" disabled={streaming || awaitingApproval || loopRunning || !input.trim()}
+            >Send</button
+          >
         </div>
         {#if model}
           <div class="picker-row">
@@ -508,6 +622,16 @@
 
   .session:hover .session-actions {
     opacity: 1;
+  }
+
+  .loop-badge {
+    background: var(--accent);
+    color: #fff;
+    border-radius: 6px;
+    padding: 1px 6px;
+    font-size: 10px;
+    letter-spacing: 0.5px;
+    flex-shrink: 0;
   }
 
   .icon {
@@ -685,6 +809,70 @@
     padding: 14px 20px 18px;
     border-top: 1px solid var(--border);
     background: var(--bg-raised);
+  }
+
+  .loop-bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    max-width: 760px;
+    margin: 0 auto 10px;
+    padding: 8px 12px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--bg);
+    font-size: 13px;
+  }
+
+  .loop-toggle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+
+  .loop-interval {
+    flex: 1;
+    min-width: 0;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 5px 10px;
+    font-size: 12px;
+    color: var(--text);
+    outline: none;
+  }
+
+  .loop-interval:focus {
+    border-color: var(--accent);
+  }
+
+  .loop-action {
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 4px 10px;
+    font-size: 12px;
+    color: var(--text);
+    white-space: nowrap;
+  }
+
+  .loop-action:hover {
+    border-color: var(--accent);
+  }
+
+  .loop-action:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+
+  .loop-status {
+    color: var(--text-dim);
+    font-style: italic;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .composer {
