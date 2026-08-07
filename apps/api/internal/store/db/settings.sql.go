@@ -10,7 +10,7 @@ import (
 )
 
 const getSettings = `-- name: GetSettings :one
-SELECT id, permission_default, permission_rules, updated_at, instructions
+SELECT id, permission_default, permission_rules, instructions, updated_at
 FROM settings
 WHERE id = 1
 `
@@ -22,8 +22,8 @@ func (q *Queries) GetSettings(ctx context.Context) (Setting, error) {
 		&i.ID,
 		&i.PermissionDefault,
 		&i.PermissionRules,
-		&i.UpdatedAt,
 		&i.Instructions,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
@@ -36,7 +36,7 @@ ON CONFLICT (id) DO UPDATE SET
 	permission_rules = excluded.permission_rules,
 	instructions = excluded.instructions,
 	updated_at = CURRENT_TIMESTAMP
-RETURNING id, permission_default, permission_rules, updated_at, instructions
+RETURNING id, permission_default, permission_rules, instructions, updated_at
 `
 
 type UpsertSettingsParams struct {
@@ -52,8 +52,8 @@ func (q *Queries) UpsertSettings(ctx context.Context, arg UpsertSettingsParams) 
 		&i.ID,
 		&i.PermissionDefault,
 		&i.PermissionRules,
-		&i.UpdatedAt,
 		&i.Instructions,
+		&i.UpdatedAt,
 	)
 	return i, err
 }

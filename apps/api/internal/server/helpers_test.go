@@ -3,9 +3,11 @@ package server_test
 import (
 	"database/sql"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -95,4 +97,32 @@ func signUp(t *testing.T, app *fiber.App, dbConn *sql.DB, email string) (string,
 	var userID int64
 	require.NoError(t, dbConn.QueryRow("SELECT id FROM auth_users WHERE email = ?", email).Scan(&userID))
 	return cookie, userID
+}
+
+// doRequest performs an authenticated request against the app with the given
+// session cookie and JSON body (nil for none), returning the response.
+func doRequest(t *testing.T, app *fiber.App, method, path, cookie string, body any) *http.Response {
+	t.Helper()
+
+	var reader io.Reader
+	if body != nil {
+		payload, err := json.Marshal(body)
+		require.NoError(t, err)
+		reader = strings.NewReader(string(payload))
+	}
+
+	req := httptest.NewRequest(method, path, reader)
+	req.Header.Set("Content-Type", "application/json")
+	if cookie != "" {
+		req.Header.Set("Cookie", cookie)
+	}
+
+	res, err := app.Test(req, fiber.TestConfig{Timeout: 0})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = res.Body.Close() })
+	return res
+}
+
+func itoa(n int64) string {
+	return strconv.FormatInt(n, 10)
 }

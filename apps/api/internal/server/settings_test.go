@@ -21,7 +21,7 @@ func TestSettingsRoundTrip(t *testing.T) {
 	app, _, dbConn := newTestApp(t, llm.NewMock())
 	cookie, _ := signUp(t, app, dbConn, "admin@example.com")
 
-	res := doJobsRequest(t, app, http.MethodPut, "/api/v1/settings", cookie, map[string]any{
+	res := doRequest(t, app, http.MethodPut, "/api/v1/settings", cookie, map[string]any{
 		"permission_default": "ask",
 		"permission_rules":   "exec:allow",
 		"instructions":       "Answer in haiku.",
@@ -34,7 +34,7 @@ func TestSettingsRoundTrip(t *testing.T) {
 	assert.Equal(t, "exec:allow", updated.PermissionRules)
 	assert.Equal(t, "Answer in haiku.", updated.Instructions)
 
-	res = doJobsRequest(t, app, http.MethodGet, "/api/v1/settings", cookie, nil)
+	res = doRequest(t, app, http.MethodGet, "/api/v1/settings", cookie, nil)
 	require.Equal(t, http.StatusOK, res.StatusCode)
 
 	var got settingsResponse

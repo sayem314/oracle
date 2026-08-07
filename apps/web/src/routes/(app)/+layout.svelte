@@ -23,7 +23,6 @@
       <span class="brand">oracle</span>
       <nav>
         <a href="/" class:active={path === "/"}>Chat</a>
-        <a href="/jobs" class:active={path.startsWith("/jobs")}>Jobs</a>
         <a href="/settings" class:active={path.startsWith("/settings")}>Settings</a>
       </nav>
     </div>

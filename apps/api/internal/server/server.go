@@ -33,10 +33,6 @@ func New(deps Deps) *fiber.App {
 	api := app.Group("/api/v1", requireSession(deps.Auth))
 	api.Post("/chat", newChatHandler(deps))
 	api.Post("/approvals", newApprovalHandler(deps))
-	api.Get("/jobs", newListJobsHandler(deps))
-	api.Post("/jobs", newCreateJobHandler(deps))
-	api.Patch("/jobs/:id", newUpdateJobHandler(deps))
-	api.Delete("/jobs/:id", newDeleteJobHandler(deps))
 
 	api.Get("/llm/provider", newGetLLMProviderHandler(deps))
 	admin := api.Group("/llm/provider", requireAdmin(deps.Auth))

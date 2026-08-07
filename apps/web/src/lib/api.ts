@@ -264,52 +264,6 @@ async function consumeChatStream(res: Response, cb: ChatStreamCallbacks): Promis
   }
 }
 
-export interface Job {
-  id: number;
-  session_id: number | null;
-  schedule: string;
-  prompt: string;
-  enabled: boolean;
-  model: string;
-  last_run_at: string | null;
-  last_status: string;
-  next_run_at: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface JobInput {
-  schedule: string;
-  prompt: string;
-  session_id?: number;
-  model?: string;
-}
-
-export async function listJobs(): Promise<Job[]> {
-  const res = await fetch("/api/v1/jobs", { credentials: "include" });
-  if (!res.ok) {
-    throw new Error(await parseError(res));
-  }
-  return (await res.json()) as Job[];
-}
-
-export async function createJob(input: JobInput): Promise<Job> {
-  const res = await postJSON("/api/v1/jobs", input);
-  return (await res.json()) as Job;
-}
-
-export async function updateJob(
-  id: number,
-  patch: { schedule?: string; prompt?: string; enabled?: boolean; model?: string },
-): Promise<Job> {
-  const res = await patchJSON(`/api/v1/jobs/${id}`, patch);
-  return (await res.json()) as Job;
-}
-
-export async function deleteJob(id: number): Promise<void> {
-  await deleteRequest(`/api/v1/jobs/${id}`);
-}
-
 export interface SessionInfo {
   id: number;
   title: string;

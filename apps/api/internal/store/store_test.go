@@ -4,7 +4,6 @@ import (
 	"database/sql"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -215,114 +214,11 @@ func TestMigrateIsIdempotent(t *testing.T) {
 
 	applied, err := store.Migrate(dbConn)
 	require.NoError(t, err)
-	assert.Equal(t, 7, applied)
+	assert.Equal(t, 6, applied)
 
 	applied, err = store.Migrate(dbConn)
 	require.NoError(t, err)
 	assert.Equal(t, 0, applied)
-}
-
-func TestJobLifecycle(t *testing.T) {
-	s, _ := openStore(t)
-	ctx := t.Context()
-
-	next := time.Date(2026, 8, 5, 8, 0, 0, 0, time.UTC)
-	job, err := s.CreateJob(ctx, db.CreateJobParams{
-		Schedule:  "0 8 * * *",
-		Prompt:    "morning briefing",
-		Enabled:   1,
-		NextRunAt: sql.NullTime{Time: next, Valid: true},
-	})
-	require.NoError(t, err)
-	assert.Positive(t, job.ID)
-	assert.Equal(t, "0 8 * * *", job.Schedule)
-	assert.True(t, job.NextRunAt.Valid)
-
-	got, err := s.GetJob(ctx, job.ID)
-	require.NoError(t, err)
-	assert.Equal(t, job.ID, got.ID)
-
-	jobs, err := s.ListJobs(ctx)
-	require.NoError(t, err)
-	assert.Len(t, jobs, 1)
-
-	updated, err := s.UpdateJob(ctx, db.UpdateJobParams{
-		Schedule: "30 7 * * *",
-		Prompt:   "earlier briefing",
-		Enabled:  0,
-		ID:       job.ID,
-	})
-	require.NoError(t, err)
-	assert.Equal(t, "30 7 * * *", updated.Schedule)
-	assert.Equal(t, int64(0), updated.Enabled)
-	assert.False(t, updated.NextRunAt.Valid)
-
-	require.NoError(t, s.DeleteJob(ctx, job.ID))
-	_, err = s.GetJob(ctx, job.ID)
-	assert.ErrorIs(t, err, sql.ErrNoRows)
-}
-
-func TestJobClaimRoundTrip(t *testing.T) {
-	s, _ := openStore(t)
-	ctx := t.Context()
-
-	_, err := s.CreateJob(ctx, db.CreateJobParams{
-		Schedule:  "0 8 * * *",
-		Prompt:    "brief me",
-		Enabled:   1,
-		NextRunAt: sql.NullTime{Time: time.Date(2026, 8, 5, 8, 0, 0, 0, time.UTC), Valid: true},
-	})
-	require.NoError(t, err)
-
-	due, err := s.ListDueJobs(ctx, sql.NullTime{Time: time.Date(2026, 8, 5, 9, 0, 0, 0, time.UTC), Valid: true})
-	require.NoError(t, err)
-	require.Len(t, due, 1)
-
-	next := time.Date(2026, 8, 6, 8, 0, 0, 0, time.UTC)
-	claimed, err := s.ClaimJob(ctx, db.ClaimJobParams{
-		NewNextRunAt:      sql.NullTime{Time: next, Valid: true},
-		LastRunAt:         sql.NullTime{Time: time.Date(2026, 8, 5, 8, 0, 1, 0, time.UTC), Valid: true},
-		ID:                due[0].ID,
-		ExpectedNextRunAt: due[0].NextRunAt,
-	})
-	require.NoError(t, err)
-	assert.Equal(t, int64(1), claimed)
-
-	claimed, err = s.ClaimJob(ctx, db.ClaimJobParams{
-		NewNextRunAt:      sql.NullTime{Time: next.Add(time.Hour), Valid: true},
-		LastRunAt:         sql.NullTime{Time: time.Date(2026, 8, 5, 8, 0, 2, 0, time.UTC), Valid: true},
-		ID:                due[0].ID,
-		ExpectedNextRunAt: due[0].NextRunAt,
-	})
-	require.NoError(t, err)
-	assert.Equal(t, int64(0), claimed)
-}
-
-func TestListDueJobs(t *testing.T) {
-	s, _ := openStore(t)
-	ctx := t.Context()
-
-	dueTime := time.Date(2026, 8, 5, 8, 0, 0, 0, time.UTC)
-	_, err := s.CreateJob(ctx, db.CreateJobParams{
-		Schedule: "0 8 * * *", Prompt: "due", Enabled: 1,
-		NextRunAt: sql.NullTime{Time: dueTime, Valid: true},
-	})
-	require.NoError(t, err)
-	_, err = s.CreateJob(ctx, db.CreateJobParams{
-		Schedule: "0 9 * * *", Prompt: "future", Enabled: 1,
-		NextRunAt: sql.NullTime{Time: time.Date(2026, 8, 5, 9, 0, 0, 0, time.UTC), Valid: true},
-	})
-	require.NoError(t, err)
-	_, err = s.CreateJob(ctx, db.CreateJobParams{
-		Schedule: "0 7 * * *", Prompt: "disabled", Enabled: 0,
-		NextRunAt: sql.NullTime{Time: dueTime, Valid: true},
-	})
-	require.NoError(t, err)
-
-	got, err := s.ListDueJobs(ctx, sql.NullTime{Time: time.Date(2026, 8, 5, 8, 30, 0, 0, time.UTC), Valid: true})
-	require.NoError(t, err)
-	require.Len(t, got, 1)
-	assert.Equal(t, "due", got[0].Prompt)
 }
 
 func TestLLMProviderSingleton(t *testing.T) {

@@ -19,7 +19,6 @@ import (
 	"github.com/sayem314/oracle/apps/api/internal/config"
 	"github.com/sayem314/oracle/apps/api/internal/llm"
 	"github.com/sayem314/oracle/apps/api/internal/permission"
-	"github.com/sayem314/oracle/apps/api/internal/scheduler"
 	"github.com/sayem314/oracle/apps/api/internal/server"
 	"github.com/sayem314/oracle/apps/api/internal/store"
 	"github.com/sayem314/oracle/apps/api/internal/store/db"
@@ -97,10 +96,6 @@ func main() {
 		},
 	}
 
-	sched := scheduler.New(st, engine.AsHeadless(), scheduler.DefaultInterval)
-	sched.Start()
-	log.Info().Msg("scheduler started")
-
 	app := server.New(server.Deps{
 		Store: st,
 		Auth:  authenticator,
@@ -113,7 +108,6 @@ func main() {
 	go func() {
 		<-quit
 		log.Info().Msg("shutting down")
-		sched.Stop()
 		if err := app.Shutdown(); err != nil {
 			log.Error().Err(err).Msg("shutdown")
 		}

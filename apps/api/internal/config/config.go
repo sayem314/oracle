@@ -44,7 +44,7 @@ type Config struct {
 	PermissionRules   []permission.Rule
 
 	// ContextWindow is the estimated LLM context budget in tokens, kept well
-	// under the real model window so the scheduler and compaction have room.
+	// under the real model window so compaction has room.
 	// Compaction and tool-output truncation both derive from it.
 	ContextWindow           int
 	ContextReserve          int

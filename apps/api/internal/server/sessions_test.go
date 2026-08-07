@@ -56,7 +56,7 @@ func TestListSessions(t *testing.T) {
 	_, err = s.CreateSession(t.Context(), "second")
 	require.NoError(t, err)
 
-	res := doJobsRequest(t, app, http.MethodGet, "/api/v1/sessions", cookie, nil)
+	res := doRequest(t, app, http.MethodGet, "/api/v1/sessions", cookie, nil)
 	require.Equal(t, http.StatusOK, res.StatusCode)
 	sessions := decodeSessionList(t, res)
 	require.Len(t, sessions, 2)
@@ -90,7 +90,7 @@ func TestListSessionMessagesWithToolCalls(t *testing.T) {
 	_, err = s.AppendMessage(t.Context(), db.AppendMessageParams{SessionID: session.ID, Role: "assistant", Content: "It is 12:00"})
 	require.NoError(t, err)
 
-	res := doJobsRequest(t, app, http.MethodGet, "/api/v1/sessions/"+itoa(session.ID)+"/messages", cookie, nil)
+	res := doRequest(t, app, http.MethodGet, "/api/v1/sessions/"+itoa(session.ID)+"/messages", cookie, nil)
 	require.Equal(t, http.StatusOK, res.StatusCode)
 	msgs := decodeSessionMessages(t, res)
 	require.Len(t, msgs, 3)
@@ -114,7 +114,7 @@ func TestRenameSession(t *testing.T) {
 	session, err := s.CreateSession(t.Context(), "")
 	require.NoError(t, err)
 
-	res := doJobsRequest(t, app, http.MethodPatch, "/api/v1/sessions/"+itoa(session.ID), cookie, map[string]any{"title": "renamed"})
+	res := doRequest(t, app, http.MethodPatch, "/api/v1/sessions/"+itoa(session.ID), cookie, map[string]any{"title": "renamed"})
 	require.Equal(t, http.StatusOK, res.StatusCode)
 	var updated sessionResponse
 	require.NoError(t, json.NewDecoder(res.Body).Decode(&updated))
@@ -124,7 +124,7 @@ func TestRenameSession(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "renamed", got.Title)
 
-	res = doJobsRequest(t, app, http.MethodPatch, "/api/v1/sessions/"+itoa(session.ID), cookie, map[string]any{})
+	res = doRequest(t, app, http.MethodPatch, "/api/v1/sessions/"+itoa(session.ID), cookie, map[string]any{})
 	assert.Equal(t, http.StatusBadRequest, res.StatusCode)
 	assert.Equal(t, "title is required", decodeErrorMessage(t, res))
 }
@@ -145,7 +145,7 @@ func TestDeleteSession(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	res := doJobsRequest(t, app, http.MethodDelete, "/api/v1/sessions/"+itoa(session.ID), cookie, nil)
+	res := doRequest(t, app, http.MethodDelete, "/api/v1/sessions/"+itoa(session.ID), cookie, nil)
 	require.Equal(t, http.StatusNoContent, res.StatusCode)
 
 	messages, err := s.ListMessages(t.Context(), db.ListMessagesParams{SessionID: session.ID, Limit: 10})
@@ -156,6 +156,6 @@ func TestDeleteSession(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, calls)
 
-	res = doJobsRequest(t, app, http.MethodDelete, "/api/v1/sessions/"+itoa(session.ID), cookie, nil)
+	res = doRequest(t, app, http.MethodDelete, "/api/v1/sessions/"+itoa(session.ID), cookie, nil)
 	assert.Equal(t, http.StatusNotFound, res.StatusCode)
 }

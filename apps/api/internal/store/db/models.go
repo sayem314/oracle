@@ -9,18 +9,35 @@ import (
 	"time"
 )
 
-type Job struct {
+type AuthSession struct {
 	ID         int64
-	SessionID  sql.NullInt64
-	Schedule   string
-	Prompt     string
-	Enabled    int64
-	LastRunAt  sql.NullTime
-	LastStatus string
-	NextRunAt  sql.NullTime
-	Model      string
+	Token      string
+	UserID     int64
 	CreatedAt  time.Time
-	UpdatedAt  time.Time
+	ExpiresAt  time.Time
+	LastAccess time.Time
+	Metadata   sql.NullString
+}
+
+type AuthUser struct {
+	ID              int64
+	Email           string
+	Password        sql.NullString
+	EmailVerifiedAt sql.NullTime
+	FirstName       string
+	LastName        string
+	Role            string
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+}
+
+type AuthVerification struct {
+	ID        int64
+	Subject   string
+	Value     string
+	ExpiresAt time.Time
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 type LlmProvider struct {
@@ -52,8 +69,8 @@ type Setting struct {
 	ID                int64
 	PermissionDefault string
 	PermissionRules   string
-	UpdatedAt         time.Time
 	Instructions      string
+	UpdatedAt         time.Time
 }
 
 type ToolCall struct {

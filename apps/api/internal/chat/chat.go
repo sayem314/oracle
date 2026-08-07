@@ -96,7 +96,7 @@ type rulesetRef struct {
 }
 
 // Engine drives the model->tool->model loop shared by the chat and approval
-// handlers and the scheduler.
+// handlers.
 type Engine struct {
 	Store       store.Store
 	LLM         Resolver
