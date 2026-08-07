@@ -106,7 +106,7 @@ func TestStartRunsDueLoopAndSchedulesNext(t *testing.T) {
 	st, engine := newLoopStore(t)
 	session := queueLoop(t, st, 1, "30s")
 
-	loops := scheduler.New(st, engine, 10*time.Millisecond, time.Minute)
+	loops := scheduler.New(st, engine, 10*time.Millisecond, time.Minute, 0)
 	loops.Start()
 	defer loops.Stop()
 
@@ -125,7 +125,7 @@ func TestRunOnceOnDisabledLoopStaysIdle(t *testing.T) {
 	st, engine := newLoopStore(t)
 	session := queueLoop(t, st, 0, "")
 
-	loops := scheduler.New(st, engine, 10*time.Millisecond, time.Minute)
+	loops := scheduler.New(st, engine, 10*time.Millisecond, time.Minute, 0)
 	loops.Start()
 	defer loops.Stop()
 
@@ -149,7 +149,7 @@ func TestStartRecoversStaleRuns(t *testing.T) {
 		LoopNextRunAt:  sql.NullInt64{},
 	}))
 
-	loops := scheduler.New(st, engine, 10*time.Millisecond, time.Minute)
+	loops := scheduler.New(st, engine, 10*time.Millisecond, time.Minute, 0)
 	loops.Start()
 	defer loops.Stop()
 
@@ -167,7 +167,7 @@ func TestStopCancelsInFlightRun(t *testing.T) {
 	provider := newBlockingProvider()
 	engine.LLM = &chat.LLMResolver{Store: st, Default: provider}
 
-	loops := scheduler.New(st, engine, 10*time.Millisecond, time.Minute)
+	loops := scheduler.New(st, engine, 10*time.Millisecond, time.Minute, 0)
 	loops.Start()
 
 	require.Eventually(t, func() bool {
@@ -193,7 +193,7 @@ func TestPanicInRunMarksError(t *testing.T) {
 	session := queueLoop(t, st, 0, "")
 	engine.LLM = &chat.LLMResolver{Store: st, Default: panicProvider{}}
 
-	loops := scheduler.New(st, engine, 10*time.Millisecond, time.Minute)
+	loops := scheduler.New(st, engine, 10*time.Millisecond, time.Minute, 0)
 	loops.Start()
 	defer loops.Stop()
 
@@ -206,6 +206,25 @@ func TestPanicInRunMarksError(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, got.LoopError, "panic")
 	assert.False(t, got.LoopNextRunAt.Valid)
+}
+
+func TestBudgetStopsLoopAfterMaxRuns(t *testing.T) {
+	st, engine := newLoopStore(t)
+	session := queueLoop(t, st, 1, "")
+
+	loops := scheduler.New(st, engine, 10*time.Millisecond, time.Minute, 2)
+	loops.Start()
+	defer loops.Stop()
+
+	require.Eventually(t, func() bool {
+		got, err := st.GetSession(t.Context(), session.ID)
+		return err == nil && got.LoopLastStatus == "budget"
+	}, 5*time.Second, 20*time.Millisecond)
+
+	got, err := st.GetSession(t.Context(), session.ID)
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), got.LoopRunCount)
+	assert.False(t, got.LoopNextRunAt.Valid, "budgeted loop must not reschedule")
 }
 
 func TestIntervalOf(t *testing.T) {

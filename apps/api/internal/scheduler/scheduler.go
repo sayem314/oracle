@@ -30,18 +30,20 @@ type Scheduler struct {
 	engine     *chat.Engine
 	interval   time.Duration
 	runTimeout time.Duration
+	maxRuns    int
 
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
 	done   chan struct{}
 }
 
-func New(st store.Store, engine *chat.Engine, interval, runTimeout time.Duration) *Scheduler {
+func New(st store.Store, engine *chat.Engine, interval, runTimeout time.Duration, maxRuns int) *Scheduler {
 	return &Scheduler{
 		store:      st,
 		engine:     engine,
 		interval:   interval,
 		runTimeout: runTimeout,
+		maxRuns:    maxRuns,
 		done:       make(chan struct{}),
 	}
 }
@@ -151,8 +153,9 @@ func (s *Scheduler) runOnce(ctx context.Context, session db.Session) {
 }
 
 // finish records the iteration outcome and schedules the next run. Enabled
-// loops keep retrying at the interval on error; a loop disabled mid-run just
-// stops and its one-shot run is left as-is. The status write uses a fresh
+// loops keep retrying at the interval on error. A loop disabled mid-run just
+// stops and its one-shot run is left as-is. A budgeted loop (maxRuns reached)
+// stops scheduling and reports StatusBudget. The status write uses a fresh
 // context so a canceled or timed-out run still records its outcome.
 func (s *Scheduler) finish(ctx context.Context, sessionID int64, runErr error) {
 	writeCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -167,6 +170,8 @@ func (s *Scheduler) finish(ctx context.Context, sessionID int64, runErr error) {
 	current, err := s.store.GetSession(writeCtx, sessionID)
 	if err != nil {
 		status, loopError = chat.StatusError, "loop state unavailable after run"
+	} else if s.maxRuns > 0 && current.LoopRunCount+1 >= int64(s.maxRuns) {
+		status = chat.StatusBudget
 	} else if current.LoopEnabled == 1 {
 		next = sql.NullInt64{Int64: time.Now().Add(IntervalOf(current.LoopInterval)).Unix(), Valid: true}
 	}
@@ -182,6 +187,8 @@ func (s *Scheduler) finish(ctx context.Context, sessionID int64, runErr error) {
 	}
 
 	switch {
+	case status == chat.StatusBudget:
+		log.Info().Int64("session", sessionID).Msg("loop budget exhausted")
 	case runErr == nil:
 		log.Info().Int64("session", sessionID).Msg("loop run finished")
 	case errors.Is(runErr, context.Canceled):
@@ -202,7 +209,7 @@ func (s *Scheduler) markError(ctx context.Context, sessionID int64, msg string) 
 	})
 }
 
-// IntervalOf parses a loop interval; empty, zero, or unparsable values mean
+// IntervalOf parses a loop interval. Empty, zero, or unparsable values mean
 // continuous (run again immediately).
 func IntervalOf(raw string) time.Duration {
 	raw = strings.TrimSpace(raw)

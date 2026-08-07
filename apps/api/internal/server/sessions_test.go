@@ -25,6 +25,7 @@ type sessionResponse struct {
 	LoopLastRunAt  *time.Time `json:"loop_last_run_at"`
 	LoopLastStatus string     `json:"loop_last_status"`
 	LoopError      string     `json:"loop_error"`
+	LoopRunCount   int64      `json:"loop_run_count"`
 }
 
 type sessionMessage struct {

@@ -23,6 +23,7 @@ func clearEnv(t *testing.T) {
 		"ORACLE_PERMISSION_DEFAULT", "ORACLE_PERMISSION_RULES",
 		"ORACLE_CONTEXT_WINDOW", "ORACLE_CONTEXT_RESERVE", "ORACLE_CONTEXT_TAIL_TURNS",
 		"ORACLE_CONTEXT_KEEP_RECENT_TOKENS", "ORACLE_TOOL_OUTPUT_CHARS",
+		"ORACLE_LOOP_POLL_INTERVAL", "ORACLE_LOOP_RUN_TIMEOUT", "ORACLE_LOOP_MAX_RUNS",
 	} {
 		if v, ok := os.LookupEnv(key); ok {
 			t.Cleanup(func() { _ = os.Setenv(key, v) })
@@ -57,6 +58,7 @@ func TestLoadDefaults(t *testing.T) {
 	assert.Equal(t, 2000, cfg.ToolOutputChars)
 	assert.Equal(t, 5*time.Second, cfg.LoopPollInterval)
 	assert.Equal(t, 10*time.Minute, cfg.LoopRunTimeout)
+	assert.Equal(t, 0, cfg.LoopMaxRuns)
 }
 
 func TestLoopEnvOverride(t *testing.T) {
@@ -64,11 +66,22 @@ func TestLoopEnvOverride(t *testing.T) {
 	withAuthSecret(t)
 	t.Setenv("ORACLE_LOOP_POLL_INTERVAL", "2s")
 	t.Setenv("ORACLE_LOOP_RUN_TIMEOUT", "30s")
+	t.Setenv("ORACLE_LOOP_MAX_RUNS", "25")
 
 	cfg, err := config.Load()
 	require.NoError(t, err)
 	assert.Equal(t, 2*time.Second, cfg.LoopPollInterval)
 	assert.Equal(t, 30*time.Second, cfg.LoopRunTimeout)
+	assert.Equal(t, 25, cfg.LoopMaxRuns)
+}
+
+func TestLoopInvalidMaxRuns(t *testing.T) {
+	clearEnv(t)
+	withAuthSecret(t)
+	t.Setenv("ORACLE_LOOP_MAX_RUNS", "-3")
+
+	_, err := config.Load()
+	require.ErrorContains(t, err, "loop_max_runs must be zero or positive")
 }
 
 func TestLoopInvalidDuration(t *testing.T) {

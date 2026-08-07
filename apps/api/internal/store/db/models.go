@@ -69,6 +69,7 @@ type Session struct {
 	LoopLastRunAt  sql.NullInt64
 	LoopLastStatus string
 	LoopError      string
+	LoopRunCount   int64
 }
 
 type Setting struct {

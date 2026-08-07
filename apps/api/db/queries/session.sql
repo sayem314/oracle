@@ -50,7 +50,8 @@ WHERE id = ?
 UPDATE sessions
 SET loop_last_status = ?,
     loop_error = ?,
-    loop_next_run_at = ?
+    loop_next_run_at = ?,
+    loop_run_count = loop_run_count + 1
 WHERE id = ?;
 
 -- name: RecoverStaleLoops :execrows

@@ -215,7 +215,7 @@ func TestMigrateIsIdempotent(t *testing.T) {
 
 	applied, err := store.Migrate(dbConn)
 	require.NoError(t, err)
-	assert.Equal(t, 7, applied)
+	assert.Equal(t, 8, applied)
 
 	applied, err = store.Migrate(dbConn)
 	require.NoError(t, err)
@@ -279,6 +279,18 @@ func TestSessionLoopLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "done", got.LoopLastStatus)
 	assert.True(t, got.LoopNextRunAt.Valid)
+
+	// Each result write counts a completed iteration, feeding the budget.
+	assert.Equal(t, int64(1), got.LoopRunCount)
+	require.NoError(t, s.UpdateSessionLoopResult(ctx, db.UpdateSessionLoopResultParams{
+		ID:             session.ID,
+		LoopLastStatus: "error",
+		LoopError:      "boom",
+		LoopNextRunAt:  sql.NullInt64{},
+	}))
+	got, err = s.GetSession(ctx, session.ID)
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), got.LoopRunCount)
 }
 
 func TestRecoverStaleLoops(t *testing.T) {
@@ -372,7 +384,7 @@ func TestLLMProviderSingleton(t *testing.T) {
 	assert.Equal(t, "sk-test", got.ApiKey)
 	assert.Equal(t, "model-a", got.Model)
 
-	// Upsert updates in place; the singleton id stays 1.
+	// Upsert updates in place. The singleton id stays 1.
 	updated, err = s.UpsertLLMProvider(ctx, db.UpsertLLMProviderParams{
 		Provider: "openai",
 		BaseUrl:  "https://openrouter.ai/api/v1",

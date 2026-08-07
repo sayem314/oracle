@@ -28,6 +28,7 @@ const (
 	StatusRunning          = "running"
 	StatusDone             = "done"
 	StatusError            = "error"
+	StatusBudget           = "budget"
 	StatusAwaitingApproval = "awaiting_approval"
 	StatusDenied           = "denied"
 )
@@ -76,7 +77,7 @@ type DecisionEvent struct {
 }
 
 // Sink delivers run events to a consumer. Interactive runs stream them over
-// SSE; headless runs discard them.
+// SSE. Headless runs discard them.
 type Sink interface {
 	Send(name string, data any) error
 }
@@ -105,7 +106,7 @@ type Engine struct {
 	Tools       tool.Executor
 	Permissions *permission.Ruleset
 	// rules is the live ruleset holder once SetPermissions has run, shared by
-	// reference with headless copies. A nil Load means no save yet; callers
+	// reference with headless copies. A nil Load means no save yet. Callers
 	// then read Permissions directly, which never changes after construction.
 	rules atomic.Pointer[rulesetRef]
 	// Compaction controls context condensation and tool-output truncation when
@@ -115,7 +116,7 @@ type Engine struct {
 	// system prompt, from DetectEnvironment.
 	Environment string
 	Headless    bool
-	// ToolRoundLimit caps model->tool->model rounds in a run; zero means the
+	// ToolRoundLimit caps model->tool->model rounds in a run. Zero means the
 	// package default of 5. Loop runs raise it so long goals can chain many
 	// tool calls per iteration.
 	ToolRoundLimit int
@@ -261,7 +262,7 @@ func (e *Engine) Run(ctx context.Context, sink Sink, sessionID int64, req llm.Re
 		for i, call := range calls {
 			switch e.evaluate(rules, call.Name) {
 			case permission.Allow:
-				result, status := e.ExecuteToolCall(ctx, call)
+				result, status := e.ExecuteToolCall(ctx, sessionID, call)
 				if err := e.Store.UpdateToolCallResult(ctx, db.UpdateToolCallResultParams{
 					ID:     callRows[i].ID,
 					Result: result,
@@ -332,8 +333,11 @@ func (e *Engine) evaluate(rules *permission.Ruleset, name string) permission.Ver
 	return rules.Evaluate(name)
 }
 
-func (e *Engine) ExecuteToolCall(ctx context.Context, call llm.ToolCall) (result, status string) {
-	result, err := e.Tools.Execute(ctx, call.Name, call.Arguments)
+// ExecuteToolCall runs one tool call, exposing the running session's loop
+// control to tools like set_loop.
+func (e *Engine) ExecuteToolCall(ctx context.Context, sessionID int64, call llm.ToolCall) (result, status string) {
+	execCtx := tool.WithLoopControl(ctx, &sessionLoopControl{store: e.Store, sessionID: sessionID})
+	result, err := e.Tools.Execute(execCtx, call.Name, call.Arguments)
 	if err != nil {
 		return "tool error: " + err.Error(), StatusError
 	}

@@ -275,6 +275,7 @@ export interface SessionInfo {
   loop_last_run_at: string | null;
   loop_last_status: string;
   loop_error: string;
+  loop_run_count: number;
 }
 
 export interface SessionToolCall {

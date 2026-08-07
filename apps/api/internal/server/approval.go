@@ -78,7 +78,7 @@ func streamApproval(deps Deps, c fiber.Ctx, s *sse.Stream) error {
 
 	var result, status string
 	if approval.decision == approvalDecisionApprove {
-		result, status = deps.Chat.ExecuteToolCall(ctx, llm.ToolCall{
+		result, status = deps.Chat.ExecuteToolCall(ctx, call.SessionID, llm.ToolCall{
 			ID:        call.ToolCall.CallID,
 			Name:      call.ToolCall.Name,
 			Arguments: call.ToolCall.Arguments,

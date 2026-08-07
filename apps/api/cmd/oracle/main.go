@@ -103,7 +103,7 @@ func main() {
 		Chat:  engine,
 	})
 
-	loops := scheduler.New(st, engine.AsHeadless(), cfg.LoopPollInterval, cfg.LoopRunTimeout)
+	loops := scheduler.New(st, engine.AsHeadless(), cfg.LoopPollInterval, cfg.LoopRunTimeout, cfg.LoopMaxRuns)
 	loops.Start()
 
 	quit := make(chan os.Signal, 1)

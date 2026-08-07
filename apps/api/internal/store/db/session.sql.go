@@ -38,7 +38,7 @@ func (q *Queries) ClaimSessionLoop(ctx context.Context, arg ClaimSessionLoopPara
 const createSession = `-- name: CreateSession :one
 INSERT INTO sessions (title)
 VALUES (?)
-RETURNING id, title, summary, created_at, updated_at, loop_enabled, loop_interval, loop_next_run_at, loop_last_run_at, loop_last_status, loop_error
+RETURNING id, title, summary, created_at, updated_at, loop_enabled, loop_interval, loop_next_run_at, loop_last_run_at, loop_last_status, loop_error, loop_run_count
 `
 
 func (q *Queries) CreateSession(ctx context.Context, title string) (Session, error) {
@@ -56,6 +56,7 @@ func (q *Queries) CreateSession(ctx context.Context, title string) (Session, err
 		&i.LoopLastRunAt,
 		&i.LoopLastStatus,
 		&i.LoopError,
+		&i.LoopRunCount,
 	)
 	return i, err
 }
@@ -71,7 +72,7 @@ func (q *Queries) DeleteSession(ctx context.Context, id int64) error {
 }
 
 const getSession = `-- name: GetSession :one
-SELECT id, title, summary, created_at, updated_at, loop_enabled, loop_interval, loop_next_run_at, loop_last_run_at, loop_last_status, loop_error
+SELECT id, title, summary, created_at, updated_at, loop_enabled, loop_interval, loop_next_run_at, loop_last_run_at, loop_last_status, loop_error, loop_run_count
 FROM sessions
 WHERE id = ?
 `
@@ -91,12 +92,13 @@ func (q *Queries) GetSession(ctx context.Context, id int64) (Session, error) {
 		&i.LoopLastRunAt,
 		&i.LoopLastStatus,
 		&i.LoopError,
+		&i.LoopRunCount,
 	)
 	return i, err
 }
 
 const listDueSessionLoops = `-- name: ListDueSessionLoops :many
-SELECT id, title, summary, created_at, updated_at, loop_enabled, loop_interval, loop_next_run_at, loop_last_run_at, loop_last_status, loop_error
+SELECT id, title, summary, created_at, updated_at, loop_enabled, loop_interval, loop_next_run_at, loop_last_run_at, loop_last_status, loop_error, loop_run_count
 FROM sessions
 WHERE loop_next_run_at IS NOT NULL
   AND loop_next_run_at <= ?
@@ -125,6 +127,7 @@ func (q *Queries) ListDueSessionLoops(ctx context.Context, loopNextRunAt sql.Nul
 			&i.LoopLastRunAt,
 			&i.LoopLastStatus,
 			&i.LoopError,
+			&i.LoopRunCount,
 		); err != nil {
 			return nil, err
 		}
@@ -140,7 +143,7 @@ func (q *Queries) ListDueSessionLoops(ctx context.Context, loopNextRunAt sql.Nul
 }
 
 const listSessions = `-- name: ListSessions :many
-SELECT id, title, summary, created_at, updated_at, loop_enabled, loop_interval, loop_next_run_at, loop_last_run_at, loop_last_status, loop_error
+SELECT id, title, summary, created_at, updated_at, loop_enabled, loop_interval, loop_next_run_at, loop_last_run_at, loop_last_status, loop_error, loop_run_count
 FROM sessions
 ORDER BY updated_at DESC, id DESC
 LIMIT ? OFFSET ?
@@ -172,6 +175,7 @@ func (q *Queries) ListSessions(ctx context.Context, arg ListSessionsParams) ([]S
 			&i.LoopLastRunAt,
 			&i.LoopLastStatus,
 			&i.LoopError,
+			&i.LoopRunCount,
 		); err != nil {
 			return nil, err
 		}
@@ -258,7 +262,8 @@ const updateSessionLoopResult = `-- name: UpdateSessionLoopResult :exec
 UPDATE sessions
 SET loop_last_status = ?,
     loop_error = ?,
-    loop_next_run_at = ?
+    loop_next_run_at = ?,
+    loop_run_count = loop_run_count + 1
 WHERE id = ?
 `
 

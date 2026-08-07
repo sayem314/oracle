@@ -31,6 +31,7 @@ const (
 	defaultToolOutputChars   = 2000
 	defaultLoopPollInterval  = 5 * time.Second
 	defaultLoopRunTimeout    = 10 * time.Minute
+	defaultLoopMaxRuns       = 0
 )
 
 type Config struct {
@@ -56,9 +57,11 @@ type Config struct {
 	ToolOutputChars         int
 
 	// LoopPollInterval is how often the scheduler scans sessions for due loop
-	// iterations. LoopRunTimeout bounds each headless iteration.
+	// iterations. LoopRunTimeout bounds each headless iteration. LoopMaxRuns
+	// caps total iterations per session loop. Zero means unlimited.
 	LoopPollInterval time.Duration
 	LoopRunTimeout   time.Duration
+	LoopMaxRuns      int
 }
 
 func Load() (Config, error) {
@@ -79,6 +82,7 @@ func Load() (Config, error) {
 		"tool_output_chars":          defaultToolOutputChars,
 		"loop_poll_interval":         defaultLoopPollInterval.String(),
 		"loop_run_timeout":           defaultLoopRunTimeout.String(),
+		"loop_max_runs":              strconv.Itoa(defaultLoopMaxRuns),
 	}, "."), nil); err != nil {
 		return Config{}, fmt.Errorf("load defaults: %w", err)
 	}
@@ -151,6 +155,10 @@ func Load() (Config, error) {
 	if loopRunTimeout <= 0 {
 		return Config{}, fmt.Errorf("loop_run_timeout must be a positive duration, got %q", k.String("loop_run_timeout"))
 	}
+	loopMaxRuns := k.Int("loop_max_runs")
+	if loopMaxRuns < 0 {
+		return Config{}, fmt.Errorf("loop_max_runs must be zero or positive, got %q", k.String("loop_max_runs"))
+	}
 
 	return Config{
 		Port:                    port,
@@ -171,6 +179,7 @@ func Load() (Config, error) {
 		ToolOutputChars:         k.Int("tool_output_chars"),
 		LoopPollInterval:        loopPollInterval,
 		LoopRunTimeout:          loopRunTimeout,
+		LoopMaxRuns:             loopMaxRuns,
 	}, nil
 }
 

@@ -73,7 +73,7 @@
   async function pollLoop() {
     if (activeSessionId === null || streaming) return;
     const status = activeSession?.loop_last_status ?? "";
-    if (status !== prevLoopStatus && (status === "done" || status === "error")) {
+    if (status !== prevLoopStatus && (status === "done" || status === "error" || status === "budget")) {
       prevLoopStatus = status;
       await openSession(activeSessionId);
       return;
@@ -491,12 +491,15 @@
               running...
             {:else if activeSession.loop_error}
               {activeSession.loop_error}
+            {:else if activeSession.loop_last_status === "budget"}
+              budget exhausted after {activeSession.loop_run_count} runs
             {:else if activeSession.loop_last_status === "done" || activeSession.loop_last_status === "error"}
               {#if activeSession.loop_enabled}
                 last run {fmtTime(activeSession.loop_last_run_at)}, next {fmtTime(activeSession.loop_next_run_at)}
               {:else}
                 last run {fmtTime(activeSession.loop_last_run_at)}
               {/if}
+              {#if activeSession.loop_run_count > 0}, {activeSession.loop_run_count} runs{/if}
             {:else}
               not run yet
             {/if}
