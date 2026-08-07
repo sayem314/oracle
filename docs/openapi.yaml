@@ -21,12 +21,10 @@ servers:
 tags:
   - name: chat
     description: Streaming model turns and tool approval decisions.
-  - name: jobs
-    description: Scheduled headless runs.
   - name: providers
     description: Admin-managed LLM gateway profiles and per-user defaults.
   - name: sessions
-    description: Chat session history.
+    description: Chat session history and goal loops.
   - name: users
     description: Admin-managed users and permission overrides.
 paths:
@@ -61,6 +59,8 @@ paths:
         surface as `tool_calls`; `approval_required` pauses the turn until a
         decision arrives on `/api/v1/approvals`; `done` terminates the
         stream. Streams `error` instead of `done` on failure.
+        Sending to a session that has a goal loop running is rejected with
+        409 while the loop is active.
       operationId: streamChat
       security:
         - sessionCookie: []
@@ -88,6 +88,10 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
         '500':
           $ref: '#/components/responses/InternalError'
   /api/v1/approvals:
@@ -124,96 +128,33 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalError'
-  /api/v1/jobs:
-    get:
-      tags: [jobs]
-      summary: List scheduled jobs
-      description: Only the current user's jobs.
-      operationId: listJobs
-      security:
-        - sessionCookie: []
-      responses:
-        '200':
-          description: All jobs for the session's user, newest last.
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/Job'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '500':
-          $ref: '#/components/responses/InternalError'
-    post:
-      tags: [jobs]
-      summary: Create a scheduled job
-      operationId: createJob
-      security:
-        - sessionCookie: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/JobCreate'
-      responses:
-        '201':
-          description: The created job.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Job'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '500':
-          $ref: '#/components/responses/InternalError'
-  /api/v1/jobs/{id}:
+  /api/v1/sessions/{id}/loop/run:
     parameters:
-      - $ref: '#/components/parameters/JobId'
-    patch:
-      tags: [jobs]
-      summary: Update a scheduled job
-      description: Only fields present in the body are changed.
-      operationId: updateJob
+      - $ref: '#/components/parameters/SessionId'
+    post:
+      tags: [sessions]
+      summary: Run one loop iteration now
+      description: >
+        Queues a single headless loop iteration on the session, even when the
+        loop is disabled (a one-shot run). The scheduler claims and runs it
+        asynchronously. Rejected with 409 while a loop run is already in
+        progress on the session.
+      operationId: runSessionLoop
       security:
         - sessionCookie: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/JobUpdate'
       responses:
-        '200':
-          description: The updated job.
+        '202':
+          description: The iteration is queued.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Job'
-        '400':
-          $ref: '#/components/responses/BadRequest'
+                $ref: '#/components/schemas/SessionInfo'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
-        '500':
-          $ref: '#/components/responses/InternalError'
-    delete:
-      tags: [jobs]
-      summary: Delete a scheduled job
-      operationId: deleteJob
-      security:
-        - sessionCookie: []
-      responses:
-        '204':
-          description: Deleted.
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '404':
-          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
         '500':
           $ref: '#/components/responses/InternalError'
   /api/v1/llm/providers:
@@ -420,7 +361,12 @@ paths:
       - $ref: '#/components/parameters/SessionId'
     patch:
       tags: [sessions]
-      summary: Rename a session
+      summary: Update a session
+      description: >
+        Rename the session and/or change its goal loop configuration. Only
+        fields present in the body are changed. Enabling the loop (or changing
+        its interval while enabled) queues the next iteration; disabling
+        cancels any queued run.
       operationId: updateSession
       security:
         - sessionCookie: []
@@ -430,10 +376,19 @@ paths:
           application/json:
             schema:
               type: object
-              required: [title]
               properties:
                 title:
                   type: string
+                  description: New session title.
+                loop_enabled:
+                  type: boolean
+                  description: Enable or disable the session's goal loop.
+                loop_interval:
+                  type: string
+                  description: >
+                    Delay between loop iterations as a Go duration ("30s",
+                    "5m"). Empty string runs continuously (as soon as the
+                    previous iteration finishes).
       responses:
         '200':
           description: The updated session.
@@ -680,14 +635,6 @@ components:
         type: integer
         format: int64
       description: Session id (visible in the start event).
-    JobId:
-      name: id
-      in: path
-      required: true
-      schema:
-        type: integer
-        format: int64
-      description: Job id.
     ProviderId:
       name: id
       in: path
@@ -725,6 +672,12 @@ components:
             $ref: '#/components/schemas/Error'
     NotFound:
       description: The resource does not exist or belongs to another user.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Conflict:
+      description: A loop iteration is already in progress on this session.
       content:
         application/json:
           schema:
@@ -769,73 +722,6 @@ components:
         decision:
           type: string
           enum: [allow, deny]
-    Job:
-      type: object
-      required: [id, schedule, prompt, enabled, provider_id, model, last_status, created_at, updated_at]
-      properties:
-        id:
-          type: integer
-          format: int64
-        session_id:
-          type: [integer, 'null']
-          format: int64
-        schedule:
-          type: string
-          description: Cron expression.
-        prompt:
-          type: string
-        enabled:
-          type: boolean
-        provider_id:
-          type: integer
-          format: int64
-        model:
-          type: string
-        last_run_at:
-          type: [string, 'null']
-          format: date-time
-        last_status:
-          type: string
-          description: ok, error, or denied.
-        next_run_at:
-          type: [string, 'null']
-          format: date-time
-        created_at:
-          type: string
-          format: date-time
-        updated_at:
-          type: string
-          format: date-time
-    JobCreate:
-      type: object
-      required: [schedule, prompt]
-      properties:
-        schedule:
-          type: string
-        prompt:
-          type: string
-        session_id:
-          type: integer
-          format: int64
-        provider_id:
-          type: integer
-          format: int64
-        model:
-          type: string
-    JobUpdate:
-      type: object
-      properties:
-        schedule:
-          type: string
-        prompt:
-          type: string
-        enabled:
-          type: boolean
-        provider_id:
-          type: integer
-          format: int64
-        model:
-          type: string
     LLMProvider:
       type: object
       required: [id, name, provider, base_url, has_api_key, models, default_model, default]
@@ -900,6 +786,28 @@ components:
           format: int64
         title:
           type: string
+        loop_enabled:
+          type: boolean
+        loop_interval:
+          type: string
+          description: Delay between iterations as a Go duration; empty means continuous.
+        loop_next_run_at:
+          type: [string, 'null']
+          format: date-time
+          description: When the next iteration is due, null when none is queued.
+        loop_last_run_at:
+          type: [string, 'null']
+          format: date-time
+        loop_last_status:
+          type: string
+          description: running, done, error, or budget (server loop_max_runs cap reached); empty when never run.
+        loop_error:
+          type: string
+          description: Error from the last iteration, empty when none.
+        loop_run_count:
+          type: integer
+          format: int64
+          description: Total iterations run on this session.
         created_at:
           type: string
           format: date-time

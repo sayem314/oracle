@@ -36,7 +36,7 @@ apps/api/            Go API (module github.com/sayem314/oracle/apps/api)
   internal/chat/     Run engine (model->tool->model loop) shared by handlers and scheduler
   internal/config/   koanf config loading + validation
   internal/llm/      LLM Provider interface, OpenAI-compatible implementation, mock
-  internal/scheduler/ Cron poll loop that runs jobs headlessly
+  internal/scheduler/ Poll loop that runs sessions' goal-loop iterations headlessly
   internal/server/   HTTP app, routes, handlers (one file per domain)
   internal/store/    Store interface over sqlc-generated db package
   internal/tool/     Tool Executor interface, Registry, built-in tools
@@ -72,10 +72,11 @@ Go style: `cmd/` per binary, private code under `internal/` grouped by feature. 
 - [x] Step 7: SvelteKit login + streaming chat UI
 - [x] Step 8: Tool-calling foundation
 - [x] Step 9: Permission ruleset (allow/deny/ask)
-- [x] Step 10a: Scheduler (cron jobs, headless runs)
+- [x] Step 10a: Scheduler (goal-loop iterations, headless runs)
 - [x] Step 10b: Multi-user hardening (admin-managed users, session APIs)
 - [x] Step 10c: Deploy (Docker, adapter-node)
 - [x] Step 11: Per-user LLM settings (provider/key/model in DB, per-request model override)
 - [x] Step 12: Global admin-managed provider profiles (named gateways, per-profile model lists, per-user default preference, chat picker)
+- [x] Step 13: Goal loops (loops live on sessions: enable/interval/run-now, `set_loop` tool, budget + timeout config)
 
 Rationale for these choices lives in `docs/decisions.md`.

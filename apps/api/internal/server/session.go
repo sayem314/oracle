@@ -4,7 +4,6 @@ import (
 	"database/sql"
 	"errors"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v3"
@@ -190,8 +189,8 @@ func newUpdateSessionHandler(deps Deps) fiber.Handler {
 			}
 			interval := session.LoopInterval
 			if req.LoopInterval != nil {
-				if err := validateLoopInterval(*req.LoopInterval); err != nil {
-					return err
+				if err := chat.ValidateLoopInterval(*req.LoopInterval); err != nil {
+					return fiber.NewError(fiber.StatusBadRequest, err.Error())
 				}
 				interval = *req.LoopInterval
 			}
@@ -208,43 +207,19 @@ func newUpdateSessionHandler(deps Deps) fiber.Handler {
 
 			if err := deps.Store.UpdateSessionLoop(c.Context(), db.UpdateSessionLoopParams{
 				ID:            session.ID,
-				LoopEnabled:   boolToInt64(enabled),
+				LoopEnabled:   chat.LoopEnabledInt(enabled),
 				LoopInterval:  interval,
 				LoopNextRunAt: nextRunAt,
 			}); err != nil {
 				return err
 			}
-			session.LoopEnabled = boolToInt64(enabled)
+			session.LoopEnabled = chat.LoopEnabledInt(enabled)
 			session.LoopInterval = interval
 			session.LoopNextRunAt = nextRunAt
 		}
 
 		return c.JSON(sessionToResponse(session))
 	}
-}
-
-// validateLoopInterval accepts an empty string (continuous) or a Go duration
-// like "30s" or "5m".
-func validateLoopInterval(raw string) error {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return nil
-	}
-	d, err := time.ParseDuration(raw)
-	if err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "loop_interval must be a duration like \"30s\" or \"5m\"")
-	}
-	if d < 0 {
-		return fiber.NewError(fiber.StatusBadRequest, "loop_interval cannot be negative")
-	}
-	return nil
-}
-
-func boolToInt64(b bool) int64 {
-	if b {
-		return 1
-	}
-	return 0
 }
 
 // newRunLoopHandler queues one iteration immediately, even when the loop is

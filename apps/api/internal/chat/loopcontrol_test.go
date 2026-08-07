@@ -57,6 +57,15 @@ func (r *fixedResolver) Resolve(context.Context, string) (llm.Provider, error) {
 	return r.provider, nil
 }
 
+func TestValidateLoopInterval(t *testing.T) {
+	for _, ok := range []string{"", "  ", "30s", "5m", "1h30m", "500ms"} {
+		assert.NoErrorf(t, ValidateLoopInterval(ok), "interval %q should parse", ok)
+	}
+	for _, bad := range []string{"soon", "every day", "-5s"} {
+		assert.ErrorContainsf(t, ValidateLoopInterval(bad), "must be a duration", "interval %q should be rejected", bad)
+	}
+}
+
 // TestSetLoopToolEnablesSessionLoop proves the model can start the session's
 // goal loop from inside a run, the mechanism behind "check every few minutes
 // and report me".

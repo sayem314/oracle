@@ -31,7 +31,7 @@ func (c *sessionLoopControl) SetLoop(ctx context.Context, enabled *bool, interva
 	}
 	loopInterval := session.LoopInterval
 	if interval != nil {
-		if err := validateLoopInterval(*interval); err != nil {
+		if err := ValidateLoopInterval(*interval); err != nil {
 			return "", err
 		}
 		loopInterval = *interval
@@ -49,7 +49,7 @@ func (c *sessionLoopControl) SetLoop(ctx context.Context, enabled *bool, interva
 
 	if err := c.store.UpdateSessionLoop(ctx, db.UpdateSessionLoopParams{
 		ID:            session.ID,
-		LoopEnabled:   loopEnabledInt(loopEnabled),
+		LoopEnabled:   LoopEnabledInt(loopEnabled),
 		LoopInterval:  loopInterval,
 		LoopNextRunAt: nextRunAt,
 	}); err != nil {
@@ -67,23 +67,25 @@ func (c *sessionLoopControl) SetLoop(ctx context.Context, enabled *bool, interva
 	return "session loop " + state, nil
 }
 
-func loopEnabledInt(b bool) int64 {
+// LoopEnabledInt maps a loop enabled flag to the sessions column value.
+func LoopEnabledInt(b bool) int64 {
 	if b {
 		return 1
 	}
 	return 0
 }
 
-// validateLoopInterval accepts an empty string (continuous) or a Go duration
-// like "30s" or "5m", mirroring the session PATCH handler.
-func validateLoopInterval(raw string) error {
+// ValidateLoopInterval accepts an empty string (continuous) or a Go duration
+// like "30s" or "5m". Shared by the session PATCH handler and the set_loop
+// tool so both surfaces reject the same input.
+func ValidateLoopInterval(raw string) error {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return nil
 	}
 	d, err := time.ParseDuration(raw)
 	if err != nil || d < 0 {
-		return errors.New("set_loop: interval must be a duration like \"30s\" or \"5m\"")
+		return errors.New("loop_interval must be a duration like \"30s\" or \"5m\"")
 	}
 	return nil
 }
