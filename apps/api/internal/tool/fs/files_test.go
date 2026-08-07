@@ -31,6 +31,15 @@ func writeTestFile(t *testing.T, content string) string {
 	return p
 }
 
+func writeTestDir(t *testing.T, names ...string) string {
+	t.Helper()
+	dir := t.TempDir()
+	for _, n := range names {
+		require.NoError(t, os.WriteFile(filepath.Join(dir, n), []byte("x"), 0o644)) //nolint:gosec // test fixture
+	}
+	return dir
+}
+
 func TestFileWriteReadRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "sub", "nested", "note.txt")
@@ -133,6 +142,80 @@ func TestFileList(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, got, "a.txt")
 	assert.Contains(t, got, "subdir/")
+}
+
+func TestFileListWindow(t *testing.T) {
+	p := writeTestDir(t, "a.txt", "b.txt", "c.txt", "d.txt", "e.txt")
+
+	got, err := fileListTool().Execute(context.Background(), mustArgs(`{"path":"`+p+`","offset":2,"limit":2,"ignore":false}`))
+	require.NoError(t, err)
+	assert.Equal(t, "b.txt\nc.txt\n\n(Showing entries 2-3 of 5. Use offset=4 to continue.)", got)
+}
+
+func TestFileListCompleteMessage(t *testing.T) {
+	p := writeTestDir(t, "a.txt", "b.txt")
+
+	got, err := fileListTool().Execute(context.Background(), mustArgs(`{"path":"`+p+`","ignore":false}`))
+	require.NoError(t, err)
+	assert.Equal(t, "a.txt\nb.txt\n\n(2 entries)", got)
+}
+
+func TestFileListOffsetOutOfRange(t *testing.T) {
+	p := writeTestDir(t, "a.txt", "b.txt")
+
+	_, err := fileListTool().Execute(context.Background(), mustArgs(`{"path":"`+p+`","offset":5,"ignore":false}`))
+	require.ErrorContains(t, err, "file_list: Offset 5 is out of range for this directory (2 entries)")
+}
+
+func TestFileListHidesDotfilesAndGitByDefault(t *testing.T) {
+	p := writeTestDir(t, "a.txt", "b.txt", ".env")
+	require.NoError(t, os.MkdirAll(filepath.Join(p, ".git"), 0o755)) //nolint:gosec // test fixture
+
+	got, err := fileListTool().Execute(context.Background(), mustArgs(`{"path":"`+p+`","ignore":false}`))
+	require.NoError(t, err)
+	assert.Equal(t, "a.txt\nb.txt\n\n(2 entries)", got)
+}
+
+func TestFileListHiddenFlag(t *testing.T) {
+	p := writeTestDir(t, "a.txt", ".env")
+	require.NoError(t, os.MkdirAll(filepath.Join(p, ".git"), 0o755)) //nolint:gosec // test fixture
+
+	got, err := fileListTool().Execute(context.Background(), mustArgs(`{"path":"`+p+`","hidden":true,"ignore":false}`))
+	require.NoError(t, err)
+	assert.Contains(t, got, ".env")
+	assert.NotContains(t, got, ".git")
+}
+
+func TestFileListGitignoreAppliedByDefault(t *testing.T) {
+	p := writeTestDir(t, "app.go")
+	require.NoError(t, os.MkdirAll(filepath.Join(p, ".git"), 0o755))                                   //nolint:gosec // test fixture
+	require.NoError(t, os.MkdirAll(filepath.Join(p, "node_modules"), 0o755))                           //nolint:gosec // test fixture
+	require.NoError(t, os.WriteFile(filepath.Join(p, ".gitignore"), []byte("node_modules/\n"), 0o644)) //nolint:gosec // test fixture
+
+	got, err := fileListTool().Execute(context.Background(), mustArgs(`{"path":"`+p+`"}`))
+	require.NoError(t, err)
+	assert.Contains(t, got, "app.go")
+	assert.NotContains(t, got, "node_modules")
+}
+
+func TestFileListIgnoreDisabled(t *testing.T) {
+	p := writeTestDir(t, "app.go", "node_modules")
+	require.NoError(t, os.MkdirAll(filepath.Join(p, ".git"), 0o755))                                   //nolint:gosec // test fixture
+	require.NoError(t, os.WriteFile(filepath.Join(p, ".gitignore"), []byte("node_modules/\n"), 0o644)) //nolint:gosec // test fixture
+
+	got, err := fileListTool().Execute(context.Background(), mustArgs(`{"path":"`+p+`","ignore":false}`))
+	require.NoError(t, err)
+	assert.Contains(t, got, "node_modules")
+}
+
+func TestFileListFilterThenWindow(t *testing.T) {
+	p := writeTestDir(t, "a.txt", "b.txt", "c.txt", "d.txt", "e.txt", "f.txt")
+	require.NoError(t, os.MkdirAll(filepath.Join(p, ".git"), 0o755))                                  //nolint:gosec // test fixture
+	require.NoError(t, os.WriteFile(filepath.Join(p, ".gitignore"), []byte("c.txt\nf.txt\n"), 0o644)) //nolint:gosec // test fixture
+
+	got, err := fileListTool().Execute(context.Background(), mustArgs(`{"path":"`+p+`","offset":2,"limit":2}`))
+	require.NoError(t, err)
+	assert.Equal(t, "b.txt\nd.txt\n\n(Showing entries 2-3 of 4. Use offset=4 to continue.)", got)
 }
 
 func TestFileDelete(t *testing.T) {

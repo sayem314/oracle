@@ -175,17 +175,28 @@ func fileWriteTool() tool.Tool {
 }
 
 func fileListTool() tool.Tool {
-	schema := json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"}},"required":["path"],"additionalProperties":false}`)
+	schema := json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"},"offset":{"type":"integer","minimum":0,"description":"The entry number to start from (1-indexed)"},"limit":{"type":"integer","minimum":0,"description":"The maximum number of entries to list (defaults to 2000)"},"hidden":{"type":"boolean","description":"Include hidden files (default false)"},"ignore":{"type":"boolean","description":"Apply .gitignore rules (default true)"}},"required":["path"],"additionalProperties":false}`)
 	return tool.Tool{
 		Definition: llm.Tool{
 			Name: "file_list",
-			Description: "List the entries in a directory. path is an absolute or relative " +
-				"directory path. Returns one entry per line, with a trailing slash on subdirectories.",
+			Description: "List the entries in a directory, one per line with a trailing slash on " +
+				"subdirectories. path is an absolute or relative directory path. offset is the " +
+				"1-indexed entry to start from (default 1) and limit is the maximum number of " +
+				"entries (default 2000), so large directories can be paged by passing offset. " +
+				"offset and limit apply to the filtered list. Hidden files are omitted by default " +
+				"and .git is never listed; pass hidden to include dotfiles. .gitignore rules found " +
+				"from the directory up to the repo root are applied by default, which hides build " +
+				"output and dependency directories such as node_modules; pass ignore to list " +
+				"everything.",
 			Parameters: schema,
 		},
 		Execute: func(_ context.Context, args json.RawMessage) (string, error) {
 			var in struct {
-				Path string `json:"path"`
+				Path   string `json:"path"`
+				Offset int    `json:"offset"`
+				Limit  int    `json:"limit"`
+				Hidden bool   `json:"hidden"`
+				Ignore *bool  `json:"ignore"`
 			}
 			if err := json.Unmarshal(args, &in); err != nil {
 				return "", fmt.Errorf("file_list: %w", err)
@@ -193,20 +204,63 @@ func fileListTool() tool.Tool {
 			if strings.TrimSpace(in.Path) == "" {
 				return "", errors.New("file_list: path is required")
 			}
-			entries, err := os.ReadDir(filepath.Clean(in.Path))
+			offset := in.Offset
+			if offset <= 0 {
+				offset = 1
+			}
+			limit := in.Limit
+			if limit <= 0 {
+				limit = defaultReadLimit
+			}
+			ignore := in.Ignore == nil || *in.Ignore
+			listDir := filepath.Clean(in.Path)
+			listDirAbs, err := filepath.Abs(listDir)
+			if err != nil {
+				listDirAbs = listDir
+			}
+			entries, err := os.ReadDir(listDir)
 			if err != nil {
 				return "", fmt.Errorf("file_list: %w", err)
 			}
-			var sb strings.Builder
+			var rules []gitignoreRule
+			if ignore {
+				rules = loadGitignoreRules(listDirAbs)
+			}
+
+			names := make([]string, 0, len(entries))
 			for _, e := range entries {
 				name := e.Name()
-				if e.IsDir() {
+				if name == ".git" {
+					continue
+				}
+				if !in.Hidden && strings.HasPrefix(name, ".") {
+					continue
+				}
+				isDir := e.IsDir()
+				if len(rules) > 0 && isGitignored(rules, listDirAbs, name, isDir) {
+					continue
+				}
+				if isDir {
 					name += "/"
 				}
-				sb.WriteString(name)
-				sb.WriteString("\n")
+				names = append(names, name)
 			}
-			return strings.TrimRight(sb.String(), "\n"), nil
+
+			total := len(names)
+			if offset > 1 && total < offset {
+				return "", fmt.Errorf("file_list: Offset %d is out of range for this directory (%d entries)", offset, total)
+			}
+			start := offset - 1
+			end := min(start+limit, total)
+			shown := names[start:end]
+			next := start + len(shown) + 1
+			out := strings.Join(shown, "\n")
+			if next <= total {
+				out += fmt.Sprintf("\n\n(Showing entries %d-%d of %d. Use offset=%d to continue.)", offset, offset+len(shown)-1, total, next)
+			} else {
+				out += fmt.Sprintf("\n\n(%d entries)", total)
+			}
+			return out, nil
 		},
 	}
 }
