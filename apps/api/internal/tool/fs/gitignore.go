@@ -18,7 +18,7 @@ type gitignoreRule struct {
 
 func parseGitignore(data []byte, baseDir string) []gitignoreRule {
 	var rules []gitignoreRule
-	for _, line := range strings.Split(string(data), "\n") {
+	for line := range strings.SplitSeq(string(data), "\n") {
 		line = strings.TrimRight(line, " \t\r")
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
