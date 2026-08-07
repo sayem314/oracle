@@ -53,6 +53,7 @@ type Setting struct {
 	PermissionDefault string
 	PermissionRules   string
 	UpdatedAt         time.Time
+	Instructions      string
 }
 
 type ToolCall struct {

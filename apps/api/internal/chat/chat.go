@@ -169,6 +169,9 @@ func (e *Engine) Run(ctx context.Context, sink Sink, sessionID int64, req llm.Re
 	if err != nil {
 		return err
 	}
+	if req.System == "" {
+		req.System = buildSystemPrompt(ctx, e.Store)
+	}
 	rules := e.currentPermissions()
 	tools := e.Tools.Definitions()
 

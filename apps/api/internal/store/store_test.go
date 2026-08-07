@@ -387,12 +387,15 @@ func TestSettingsRoundTrip(t *testing.T) {
 	created, err := s.UpsertSettings(ctx, db.UpsertSettingsParams{
 		PermissionDefault: "allow",
 		PermissionRules:   "get_time:ask, web_*:deny",
+		Instructions:      "Be brief.",
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "allow", created.PermissionDefault)
+	assert.Equal(t, "Be brief.", created.Instructions)
 
 	got, err := s.GetSettings(ctx)
 	require.NoError(t, err)
 	assert.Equal(t, "allow", got.PermissionDefault)
 	assert.Equal(t, "get_time:ask, web_*:deny", got.PermissionRules)
+	assert.Equal(t, "Be brief.", got.Instructions)
 }

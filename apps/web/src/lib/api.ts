@@ -397,11 +397,13 @@ export async function fetchLLMModels(): Promise<string[]> {
 export interface Settings {
   permission_default: string;
   permission_rules: string;
+  instructions: string;
 }
 
 export interface SettingsInput {
   permission_default: string;
   permission_rules: string;
+  instructions: string;
 }
 
 // Admin-only.

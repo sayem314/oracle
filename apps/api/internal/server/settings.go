@@ -10,18 +10,21 @@ import (
 type settingsResponse struct {
 	PermissionDefault string `json:"permission_default"`
 	PermissionRules   string `json:"permission_rules"`
+	Instructions      string `json:"instructions"`
 }
 
 func settingsToResponse(s db.Setting) settingsResponse {
 	return settingsResponse{
 		PermissionDefault: s.PermissionDefault,
 		PermissionRules:   s.PermissionRules,
+		Instructions:      s.Instructions,
 	}
 }
 
 type settingsRequest struct {
 	PermissionDefault string `json:"permission_default"`
 	PermissionRules   string `json:"permission_rules"`
+	Instructions      string `json:"instructions"`
 }
 
 func newGetSettingsHandler(deps Deps) fiber.Handler {
@@ -49,6 +52,7 @@ func newUpsertSettingsHandler(deps Deps) fiber.Handler {
 		updated, err := deps.Store.UpsertSettings(c.Context(), db.UpsertSettingsParams{
 			PermissionDefault: req.PermissionDefault,
 			PermissionRules:   req.PermissionRules,
+			Instructions:      req.Instructions,
 		})
 		if err != nil {
 			return err

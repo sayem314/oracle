@@ -33,6 +33,7 @@
 
   let permissionDefault = $state("ask");
   let permissionRules = $state("");
+  let instructions = $state("");
   let settingsSaving = $state(false);
   let sError = $state("");
   let sNotice = $state("");
@@ -55,6 +56,7 @@
       hasApiKey = p.has_api_key;
       permissionDefault = s.permission_default;
       permissionRules = s.permission_rules;
+      instructions = s.instructions;
     } catch (err) {
       error = err instanceof Error ? err.message : "failed to load settings";
     } finally {
@@ -109,10 +111,12 @@
       const updated = await updateSettings({
         permission_default: permissionDefault,
         permission_rules: permissionRules,
+        instructions,
       });
       permissionDefault = updated.permission_default;
       permissionRules = updated.permission_rules;
-      sNotice = "Ruleset updated.";
+      instructions = updated.instructions;
+      sNotice = "Settings saved.";
     } catch (err) {
       sError = err instanceof Error ? err.message : "failed to save ruleset";
     } finally {
@@ -241,8 +245,17 @@
               <textarea bind:value={permissionRules} rows="6" placeholder="web_fetch:ask, file_write:deny"></textarea>
             </label>
           </div>
+          <div class="field">
+            <label>
+              Assistant instructions (injected as the system prompt on every run)
+              <textarea
+                bind:value={instructions}
+                rows="6"
+                placeholder="Answer in haiku. Prefer the exec tool over guessing."></textarea>
+            </label>
+          </div>
           <div class="actions">
-            <button class="primary" type="submit" disabled={settingsSaving}>Save ruleset</button>
+            <button class="primary" type="submit" disabled={settingsSaving}>Save settings</button>
           </div>
         </form>
       {/if}
