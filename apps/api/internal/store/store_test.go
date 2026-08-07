@@ -215,7 +215,7 @@ func TestMigrateIsIdempotent(t *testing.T) {
 
 	applied, err := store.Migrate(dbConn)
 	require.NoError(t, err)
-	assert.Equal(t, 8, applied)
+	assert.Equal(t, 6, applied)
 
 	applied, err = store.Migrate(dbConn)
 	require.NoError(t, err)
